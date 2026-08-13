@@ -26,9 +26,7 @@ app.use(express.json());
 // shuning uchun domenlarni normallashtirib solishtiramiz.
 const normalizeOrigin = (value) => String(value || "").replace(/\/+$/, "");
 const allowedOrigins = [
-  "http://localhost:5173",
-  "https://hotel-demo-f.vercel.app",
-  "https://demo.my-hotels.uz",
+  "https://istiqlol-hotel.vercel.app",
   ...(process.env.CLIENT_ORIGINS || "").split(","),
 ]
   .map((origin) => normalizeOrigin(origin.trim()))
