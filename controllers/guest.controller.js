@@ -5,6 +5,7 @@ const Employee = require("../model/Employee");
 const Service = require("../model/Service");
 const mongoose = require("mongoose");
 const response = require("../utils/response");
+const { hasFullAccess, normalizeRole } = require("../utils/roleAccess");
 const {
   getHotelSettings,
   applyTimeToDate,
@@ -53,7 +54,7 @@ const buildActionBy = async (user) => {
 
 const canManageVip = (user) => {
   if (!user) return false;
-  return String(user.role || "").toLowerCase() === "admin";
+  return hasFullAccess(user.role);
 };
 
 const escapeRegex = (value) =>
@@ -1258,7 +1259,8 @@ const checkoutGuest = async (req, res) => {
 
 const deleteGuest = async (req, res) => {
   try {
-    if (String(req?.admin?.role || "").toLowerCase() !== "manager") {
+    const role = normalizeRole(req?.admin?.role);
+    if (role !== "manager" && !hasFullAccess(role)) {
       return response.forbidden(res, "Mehmonni faqat manager o'chira oladi");
     }
 
