@@ -10,6 +10,15 @@ const response = require("../utils/response");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+const getReportDay = (dateQuery) => {
+  const value = String(dateQuery || "");
+  if (!DATE_PATTERN.test(value)) return null;
+
+  const day = moment.tz(value, "YYYY-MM-DD", true, TIMEZONE);
+  return day.isValid() && day.format("YYYY-MM-DD") === value ? day : null;
+};
 
 const getMonthBase = (monthQuery) => {
   if (MONTH_PATTERN.test(String(monthQuery || ""))) {
@@ -385,6 +394,146 @@ const getReportsSummary = async (req, res) => {
   }
 };
 
+const getDailyReport = async (req, res) => {
+  try {
+    const day = getReportDay(req.query.date);
+    if (!day) {
+      return response.error(res, "Sana YYYY-MM-DD formatida bo'lishi kerak");
+    }
+
+    const today = moment.tz(TIMEZONE).startOf("day");
+    if (day.isAfter(today, "day")) {
+      return response.error(res, "Kelajak sanasi uchun hisobot olib bo'lmaydi");
+    }
+
+    const dayStart = day.clone().startOf("day").toDate();
+    const nextDayStart = day.clone().add(1, "day").startOf("day").toDate();
+
+    const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, guestsAtEnd, totalRooms] =
+      await Promise.all([
+        Guest.aggregate([
+          { $unwind: "$payments" },
+          { $match: { "payments.createdAt": { $gte: dayStart, $lt: nextDayStart } } },
+          { $lookup: { from: "rooms", localField: "room", foreignField: "_id", as: "roomDoc" } },
+          { $unwind: { path: "$roomDoc", preserveNullAndEmptyArrays: true } },
+          { $sort: { "payments.createdAt": 1 } },
+          { $project: {
+            _id: 0,
+            amount: { $ifNull: ["$payments.amount", 0] },
+            type: "$payments.type",
+            createdAt: "$payments.createdAt",
+            source: {
+              $concat: [
+                "Xona ", { $ifNull: ["$roomDoc.roomNumber", "-"] }, " - ",
+                { $ifNull: ["$firstname", ""] }, " ", { $ifNull: ["$lastname", ""] },
+              ],
+            },
+          } },
+        ]),
+        HallBooking.aggregate([
+          { $unwind: "$payments" },
+          { $match: { "payments.createdAt": { $gte: dayStart, $lt: nextDayStart } } },
+          { $sort: { "payments.createdAt": 1 } },
+          { $project: {
+            _id: 0,
+            amount: { $ifNull: ["$payments.amount", 0] },
+            type: "$payments.type",
+            createdAt: "$payments.createdAt",
+            source: { $concat: [{ $ifNull: ["$hallName", "Zal"] }, " - ", { $ifNull: ["$eventName", ""] }] },
+          } },
+        ]),
+        Expense.find({ spentAt: { $gte: dayStart, $lt: nextDayStart } })
+          .select("title category amount paymentType spentAt")
+          .sort({ spentAt: 1 })
+          .lean(),
+        Guest.aggregate([
+          { $unwind: "$services" },
+          { $match: { "services.usedAt": { $gte: dayStart, $lt: nextDayStart } } },
+          { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
+        ]).then((rows) => rows?.[0] || {}),
+        Guest.find({
+          checkInAt: { $lt: nextDayStart },
+          $or: [{ checkOutAt: null }, { checkOutAt: { $gte: nextDayStart } }],
+        })
+          .select("room totalAmount payments checkInAt checkOutAt")
+          .lean(),
+        Room.countDocuments({ createdAt: { $lt: nextDayStart } }),
+      ]);
+
+    const payments = [...guestPaymentRows, ...hallPaymentRows]
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const paymentTotals = payments.reduce(
+      (totals, payment) => {
+        const amount = Number(payment.amount || 0);
+        totals.total += amount;
+        totals[payment.type] = Number(totals[payment.type] || 0) + amount;
+        return totals;
+      },
+      { total: 0, naqd: 0, karta: 0, click: 0, bank: 0 },
+    );
+    const expenseTotal = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const occupiedRoomIds = new Set(guestsAtEnd.map((guest) => String(guest.room || "")));
+    const debtRows = guestsAtEnd.map((guest) => {
+      const paidByEnd = (guest.payments || []).reduce(
+        (sum, payment) => new Date(payment.createdAt) < nextDayStart
+          ? sum + Number(payment.amount || 0)
+          : sum,
+        0,
+      );
+      return Math.max(0, Number(guest.totalAmount || 0) - paidByEnd);
+    });
+    const arrivals = await Guest.countDocuments({ checkInAt: { $gte: dayStart, $lt: nextDayStart } });
+    const departures = await Guest.countDocuments({ checkOutAt: { $gte: dayStart, $lt: nextDayStart } });
+
+    return response.success(res, "Kunlik hisobot ma'lumotlari", {
+      date: day.format("YYYY-MM-DD"),
+      timezone: TIMEZONE,
+      generatedAt: new Date().toISOString(),
+      revenue: {
+        total: paymentTotals.total,
+        room: guestPaymentRows.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+        services: Number(servicesAgg.totalAmount || 0),
+        hall: hallPaymentRows.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      },
+      expenses: {
+        total: expenseTotal,
+        items: expenses.map((item) => ({
+          title: item.title,
+          category: item.category,
+          amount: Number(item.amount || 0),
+          paymentType: item.paymentType,
+        })),
+      },
+      balance: paymentTotals.total - expenseTotal,
+      paymentTypes: {
+        cash: paymentTotals.naqd,
+        card: paymentTotals.karta + paymentTotals.click,
+        transfer: paymentTotals.bank,
+      },
+      operations: {
+        occupiedRooms: occupiedRoomIds.size,
+        availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRoomIds.size),
+        arrivals,
+        departures,
+        guests: guestsAtEnd.length,
+      },
+      debt: {
+        debtors: debtRows.filter((amount) => amount > 0).length,
+        total: debtRows.reduce((sum, amount) => sum + amount, 0),
+      },
+      payments: payments.map((payment) => ({
+        time: moment(payment.createdAt).tz(TIMEZONE).format("HH:mm"),
+        source: payment.source.trim(),
+        type: payment.type,
+        amount: Number(payment.amount || 0),
+      })),
+    });
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 module.exports = {
+  getDailyReport,
   getReportsSummary,
 };

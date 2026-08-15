@@ -41,7 +41,7 @@ const {
   deleteExpense,
 } = require("../controllers/expense.controller");
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
-const { getReportsSummary } = require("../controllers/reports.controller");
+const { getDailyReport, getReportsSummary } = require("../controllers/reports.controller");
 const {
   getSettings,
   updateSettings,
@@ -140,6 +140,7 @@ router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
 router.get("/reports-summary", getReportsSummary);
+router.get("/reports-daily", getDailyReport);
 router.get("/expenses", getExpenses);
 router.put(
   "/expense/:id",
