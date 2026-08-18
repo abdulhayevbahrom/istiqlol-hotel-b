@@ -53,6 +53,7 @@ const {
   updateGuestSchema,
   guestIdParamsSchema,
   guestPassportParamsSchema,
+  bulkCheckoutGuestsSchema,
   addPaymentSchema,
   addGuestServiceSchema,
   vipRequestIdParamsSchema,
@@ -86,6 +87,7 @@ const {
   addGuestPayment,
   addGuestService,
   checkoutGuest,
+  checkoutGuestsBulk,
   deleteGuest,
 } = require("../controllers/guest.controller");
 const {
@@ -236,6 +238,11 @@ router.post(
   "/guest/:id/checkout",
   validate(guestIdParamsSchema, "params"),
   checkoutGuest,
+);
+router.post(
+  "/guests/checkout-bulk",
+  validate(bulkCheckoutGuestsSchema),
+  checkoutGuestsBulk,
 );
 router.delete("/guest/:id", validate(guestIdParamsSchema, "params"), deleteGuest);
 router.post(

@@ -328,13 +328,60 @@ const runReminderJob = async (io, targetDate) => {
   });
 };
 
+const runAutomaticCheckoutJob = async (io) => {
+  const now = new Date();
+  const guests = await Guest.find({
+    status: "active",
+    checkoutDueAt: { $lte: now },
+  })
+    .select("_id room checkoutDueAt")
+    .lean();
+
+  if (!guests.length) return;
+
+  const roomIds = [];
+  const ops = guests.map((guest) => {
+    if (guest?.room) roomIds.push(String(guest.room));
+    return {
+      updateOne: {
+        filter: { _id: guest._id, status: "active" },
+        update: {
+          $set: {
+            status: "checked_out",
+            checkOutAt: guest.checkoutDueAt || now,
+            checkoutBy: {
+              userId: "system",
+              role: "system",
+              login: "system",
+              firstname: "Auto",
+              lastname: "Checkout",
+            },
+          },
+        },
+      },
+    };
+  });
+
+  if (!ops.length) return;
+
+  await Guest.bulkWrite(ops, { ordered: false });
+  await syncRoomsOccupancyByIds(roomIds);
+  emitGuestChanged(io, {
+    reason: "guest_auto_checked_out",
+    count: ops.length,
+    roomIds,
+  });
+};
+
 // Har daqiqada tekshiradi va sozlamadagi vaqtlar bo'yicha vazifalarni bir martadan ishga tushiradi
 const startGuestBillingCron = (io) => {
   const state = {
     reminderKey: "",
     overdueKey: "",
+    checkoutKey: "",
     activating: false,
     overdueRunning: false,
+    checkoutRunning: false,
   };
 
   const tick = async () => {
@@ -375,6 +422,16 @@ const startGuestBillingCron = (io) => {
             state.overdueRunning = false;
           }
         }
+
+        if (state.checkoutKey !== overdueKey && !state.checkoutRunning) {
+          state.checkoutRunning = true;
+          state.checkoutKey = overdueKey;
+          try {
+            await runAutomaticCheckoutJob(io);
+          } finally {
+            state.checkoutRunning = false;
+          }
+        }
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -385,6 +442,7 @@ const startGuestBillingCron = (io) => {
   // Server yoqilganda bir martalik tekshiruv
   runActivateDueBookingsJob(io).catch(() => {});
   runOverdueBillingJob(io).catch(() => {});
+  runAutomaticCheckoutJob(io).catch(() => {});
   // Har 30 sekundda vaqt triggerini tekshiradi
   const interval = setInterval(tick, 30 * 1000);
   return interval;

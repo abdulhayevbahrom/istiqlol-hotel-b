@@ -27,6 +27,7 @@ app.use(express.json());
 const normalizeOrigin = (value) => String(value || "").replace(/\/+$/, "");
 const allowedOrigins = [
   "https://istiqlol-hotel.vercel.app",
+  "http://localhost:5173",
   ...(process.env.CLIENT_ORIGINS || "").split(","),
 ]
   .map((origin) => normalizeOrigin(origin.trim()))

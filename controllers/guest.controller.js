@@ -52,6 +52,13 @@ const buildActionBy = async (user) => {
   return action;
 };
 
+const parseDateTimeInput = (value, fallback = null) => {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed;
+};
+
 const canManageVip = (user) => {
   if (!user) return false;
   return hasFullAccess(user.role);
@@ -103,6 +110,12 @@ const recalcAmounts = (guest) => {
   const paid = Number(guest.paidAmount || 0);
   const total = Number(guest.totalAmount || 0);
   guest.debtAmount = Math.max(total - paid, 0);
+};
+
+const splitDailyRate = (totalDailyRate, guestCount = 1) => {
+  const total = Number(totalDailyRate || 0);
+  const count = Math.max(Number(guestCount || 1), 1);
+  return Math.round(total / count);
 };
 
 const syncGuestBilling = async (
@@ -239,6 +252,7 @@ const createGuest = async (req, res) => {
       vip = false,
       isBooking = false,
       bookedForDate,
+      checkInAt,
       room,
       dailyRate,
       stayDays,
@@ -304,7 +318,9 @@ const createGuest = async (req, res) => {
       }
     }
 
-    const baseCheckInAt = isReservation ? bookedForAt : new Date();
+    const baseCheckInAt = isReservation
+      ? bookedForAt
+      : parseDateTimeInput(checkInAt, new Date());
     const billing = buildBillingState(
       baseCheckInAt,
       normalizedStayDays,
@@ -314,6 +330,7 @@ const createGuest = async (req, res) => {
 
     const isVipRequested = !isReservation && Boolean(vip);
     const acceptedBy = await buildActionBy(req.admin);
+    const guestDailyRate = splitDailyRate(normalizedDailyRate, 1);
 
     const guest = await Guest.create({
       firstname,
@@ -331,10 +348,10 @@ const createGuest = async (req, res) => {
       checkoutReminderAt: billing.checkoutReminderAt,
       checkoutDueAt: billing.checkoutDueAt,
       bookedForAt,
-      dailyRate: normalizedDailyRate,
-      totalAmount: normalizedDailyRate * billing.billableDays,
+      dailyRate: guestDailyRate,
+      totalAmount: guestDailyRate * billing.billableDays,
       paidAmount: 0,
-      debtAmount: isReservation ? 0 : normalizedDailyRate * billing.billableDays,
+      debtAmount: isReservation ? 0 : guestDailyRate * billing.billableDays,
       payments: [],
       status: isReservation ? "booked" : "active",
       acceptedBy,
@@ -405,6 +422,7 @@ const createGuestsBulk = async (req, res) => {
       guestType = "uzb",
       isBooking = false,
       bookedForDate,
+      checkInAt,
       guests = [],
     } = req.body;
 
@@ -484,13 +502,17 @@ const createGuestsBulk = async (req, res) => {
 
     const hotelSettings = await getHotelSettings();
     const acceptedBy = await buildActionBy(req.admin);
-    const baseCheckInAt = isReservation ? bookedForAt : new Date();
+    const baseCheckInAt = isReservation
+      ? bookedForAt
+      : parseDateTimeInput(checkInAt, new Date());
     const billing = buildBillingState(
       baseCheckInAt,
       normalizedStayDays,
       new Date(),
       hotelSettings,
     );
+
+    const guestDailyRate = splitDailyRate(normalizedDailyRate, normalizedGuests.length);
 
     const docs = normalizedGuests.map((guest) => {
       const isVipRequested = !isReservation && Boolean(guest.vip);
@@ -510,10 +532,10 @@ const createGuestsBulk = async (req, res) => {
         checkoutReminderAt: billing.checkoutReminderAt,
         checkoutDueAt: billing.checkoutDueAt,
         bookedForAt,
-        dailyRate: normalizedDailyRate,
-        totalAmount: normalizedDailyRate * billing.billableDays,
+        dailyRate: guestDailyRate,
+        totalAmount: guestDailyRate * billing.billableDays,
         paidAmount: 0,
-        debtAmount: isReservation ? 0 : normalizedDailyRate * billing.billableDays,
+        debtAmount: isReservation ? 0 : guestDailyRate * billing.billableDays,
         payments: [],
         status: isReservation ? "booked" : "active",
         acceptedBy,
@@ -851,6 +873,14 @@ const updateGuest = async (req, res) => {
       }
       updates.bookedForAt = parsedBookedDate;
       nextBookedForAt = parsedBookedDate;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "checkInAt")) {
+      const parsedCheckInAt = parseDateTimeInput(updates.checkInAt, null);
+      if (!parsedCheckInAt) {
+        return response.error(res, "Kelgan sana vaqti noto'g'ri");
+      }
+      updates.checkInAt = parsedCheckInAt;
     }
 
     if (updates.room && String(updates.room) !== String(guest.room)) {
@@ -1257,6 +1287,67 @@ const checkoutGuest = async (req, res) => {
   }
 };
 
+const checkoutGuestsBulk = async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+    const uniqueIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+    if (!uniqueIds.length) {
+      return response.error(res, "Kamida 1 ta mehmon tanlang");
+    }
+
+    const guests = await Guest.find({
+      _id: { $in: uniqueIds },
+    }).select("_id room status checkoutDueAt");
+
+    if (!guests.length) {
+      return response.notFound(res, "Mehmon topilmadi");
+    }
+
+    const activeGuests = guests.filter((guest) => guest.status !== "checked_out");
+    if (!activeGuests.length) {
+      return response.error(res, "Tanlangan mehmonlar allaqachon checkout qilingan");
+    }
+
+    const checkoutBy = await buildActionBy(req.admin);
+    const now = new Date();
+    const roomIds = [...new Set(activeGuests.map((guest) => String(guest.room || "")))];
+
+    await Guest.bulkWrite(
+      activeGuests.map((guest) => ({
+        updateOne: {
+          filter: { _id: guest._id, status: { $ne: "checked_out" } },
+          update: {
+            $set: {
+              status: "checked_out",
+              checkOutAt: guest.checkoutDueAt || now,
+              checkoutBy,
+            },
+          },
+        },
+      })),
+      { ordered: false },
+    );
+
+    await syncRoomsOccupancyBatch(roomIds);
+
+    emitGuestChanged(req.app.get("socket"), {
+      guestIds: activeGuests.map((guest) => String(guest._id)),
+      roomIds,
+      status: "checked_out",
+      reason: "guest_bulk_checked_out",
+      count: activeGuests.length,
+    });
+
+    return response.success(
+      res,
+      `${activeGuests.length} ta mehmon checkout qilindi`,
+      { count: activeGuests.length, ids: activeGuests.map((guest) => String(guest._id)) },
+    );
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const deleteGuest = async (req, res) => {
   try {
     const role = normalizeRole(req?.admin?.role);
@@ -1306,5 +1397,6 @@ module.exports = {
   addGuestPayment,
   addGuestService,
   checkoutGuest,
+  checkoutGuestsBulk,
   deleteGuest,
 };

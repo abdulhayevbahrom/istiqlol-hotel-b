@@ -2,16 +2,35 @@ const Room = require("../model/Room");
 const Guest = require("../model/Guest");
 const response = require("../utils/response");
 
-const normalizeRoomNumber = (value) => String(value || "").trim().toUpperCase();
+const parseLegacyRoomNumber = (value) => {
+  const raw = String(value || "").trim().toUpperCase();
+  const match = raw.match(/^(\d+)([AB])$/);
+  if (!match) return { roomNumber: raw, korpus: "" };
+  return { roomNumber: match[1], korpus: match[2] };
+};
+
+const normalizeRoomNumber = (value) => parseLegacyRoomNumber(value).roomNumber;
+const normalizeKorpus = (value) => {
+  const text = String(value || "").trim().toUpperCase();
+  return ["A", "B"].includes(text) ? text : "";
+};
 const getOccupancyStatus = (activeCount, capacity) =>
   activeCount >= capacity ? "band" : "bosh";
 
 const createRoom = async (req, res) => {
   try {
     const payload = { ...req.body };
-    payload.roomNumber = normalizeRoomNumber(payload.roomNumber);
+    const legacy = parseLegacyRoomNumber(payload.roomNumber);
+    payload.roomNumber = legacy.roomNumber;
+    payload.korpus = normalizeKorpus(payload.korpus || legacy.korpus);
+    if (!payload.korpus) {
+      return response.error(res, "Korpus A yoki B bo'lishi kerak");
+    }
 
-    const exists = await Room.findOne({ roomNumber: payload.roomNumber });
+    const exists = await Room.findOne({
+      roomNumber: payload.roomNumber,
+      korpus: payload.korpus,
+    });
     if (exists) return response.error(res, "Bu xona raqami allaqachon mavjud");
 
     const room = await Room.create({
@@ -27,7 +46,7 @@ const createRoom = async (req, res) => {
 
 const getRooms = async (_, res) => {
   try {
-    const rooms = await Room.find().sort({ roomNumber: 1 });
+    const rooms = await Room.find().sort({ korpus: 1, floor: 1, roomNumber: 1 });
     return response.success(res, "Xonalar ro'yxati", rooms);
   } catch (error) {
     return response.serverError(res, error.message);
@@ -53,10 +72,32 @@ const updateRoom = async (req, res) => {
     if (!current) return response.notFound(res, "Xona topilmadi");
 
     if (updates.roomNumber) {
-      const normalized = normalizeRoomNumber(updates.roomNumber);
-      const exists = await Room.findOne({ roomNumber: normalized, _id: { $ne: id } });
+      const legacy = parseLegacyRoomNumber(updates.roomNumber);
+      const normalized = legacy.roomNumber;
+      const korpusToCheck = normalizeKorpus(updates.korpus || current.korpus);
+      const exists = await Room.findOne({
+        roomNumber: normalized,
+        korpus: korpusToCheck,
+        _id: { $ne: id },
+      });
       if (exists) return response.error(res, "Bu xona raqami allaqachon mavjud");
       updates.roomNumber = normalized;
+      if (!updates.korpus && legacy.korpus) {
+        updates.korpus = legacy.korpus;
+      }
+    }
+    if (updates.korpus) {
+      const normalizedKorpus = normalizeKorpus(updates.korpus);
+      if (!normalizedKorpus) return response.error(res, "Korpus A yoki B bo'lishi kerak");
+      updates.korpus = normalizedKorpus;
+      if (current.roomNumber) {
+        const exists = await Room.findOne({
+          roomNumber: updates.roomNumber || current.roomNumber,
+          korpus: normalizedKorpus,
+          _id: { $ne: id },
+        });
+        if (exists) return response.error(res, "Bu xona raqami allaqachon mavjud");
+      }
     }
 
     const room = await Room.findByIdAndUpdate(id, updates, {
