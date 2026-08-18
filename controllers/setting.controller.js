@@ -27,6 +27,18 @@ const updateSettings = async (req, res) => {
     if (typeof updates.logo === "string") {
       updates.logo = updates.logo.trim();
     }
+    if (Array.isArray(updates.roomCategories)) {
+      updates.roomCategories = [
+        ...new Set(
+          updates.roomCategories
+            .map((item) => String(item || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!updates.roomCategories.length) {
+        return response.error(res, "Xona kategoriyalari bo'sh bo'lishi mumkin emas");
+      }
+    }
 
     const current = await getHotelSettings();
     const checkout = parseTime(updates.checkoutTime || current.checkoutTime);

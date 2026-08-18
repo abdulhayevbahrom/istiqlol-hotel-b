@@ -55,6 +55,7 @@ const {
   guestPassportParamsSchema,
   bulkCheckoutGuestsSchema,
   addPaymentSchema,
+  updatePaymentSchema,
   addGuestServiceSchema,
   vipRequestIdParamsSchema,
   decideVipRequestSchema,
@@ -85,6 +86,7 @@ const {
   decideVipRequest,
   updateGuest,
   addGuestPayment,
+  updateGuestPayment,
   addGuestService,
   checkoutGuest,
   checkoutGuestsBulk,
@@ -227,6 +229,12 @@ router.post(
   validate(guestIdParamsSchema, "params"),
   validate(addPaymentSchema),
   addGuestPayment,
+);
+router.put(
+  "/guest/:id/payment/:paymentIndex",
+  validate(guestIdParamsSchema, "params"),
+  validate(updatePaymentSchema),
+  updateGuestPayment,
 );
 router.post(
   "/guest/:id/service",

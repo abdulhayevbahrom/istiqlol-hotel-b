@@ -56,6 +56,7 @@ const guestSchema = new mongoose.Schema(
     passport: { type: String, trim: true, default: "" },
     birthDate: { type: Date, required: true },
     phone: { type: String, trim: true, default: "" },
+    email: { type: String, trim: true, default: "" },
     guestType: { type: String, enum: ["uzb", "chetellik"], default: "uzb" },
     isBlacklisted: { type: Boolean, default: false },
 

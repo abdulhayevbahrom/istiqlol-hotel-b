@@ -248,6 +248,7 @@ const createGuest = async (req, res) => {
       passport,
       birthDate,
       phone,
+      email = "",
       guestType = "uzb",
       vip = false,
       isBooking = false,
@@ -338,6 +339,7 @@ const createGuest = async (req, res) => {
       passport: normalizedPassport,
       birthDate,
       phone: String(phone || "").trim(),
+      email: String(email || "").trim(),
       guestType,
       vip: false,
       vipRequestStatus: isVipRequested ? "pending" : "none",
@@ -477,6 +479,7 @@ const createGuestsBulk = async (req, res) => {
       passport: String(guest.passport || "").trim(),
       birthDate: guest.birthDate,
       phone: String(guest.phone || "").trim(),
+      email: String(guest.email || "").trim(),
       note: String(guest.note || "").trim(),
       vip: Boolean(guest.vip),
     }));
@@ -522,6 +525,7 @@ const createGuestsBulk = async (req, res) => {
         passport: guest.passport,
         birthDate: guest.birthDate,
         phone: guest.phone,
+        email: guest.email,
         guestType,
         vip: false,
         vipRequestStatus: isVipRequested ? "pending" : "none",
@@ -1187,6 +1191,54 @@ const addGuestPayment = async (req, res) => {
   }
 };
 
+const updateGuestPayment = async (req, res) => {
+  try {
+    const paymentIndex = Number(req.params.paymentIndex);
+    if (!Number.isInteger(paymentIndex) || paymentIndex < 0) {
+      return response.error(res, "paymentIndex noto'g'ri");
+    }
+
+    const guest = await Guest.findById(req.params.id);
+    if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    if (!Array.isArray(guest.payments) || !guest.payments[paymentIndex]) {
+      return response.notFound(res, "To'lov topilmadi");
+    }
+    if (guest.vip) {
+      return response.error(res, "VIP mehmon uchun to'lov o'zgartirilmaydi");
+    }
+
+    const payment = guest.payments[paymentIndex];
+    if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
+      payment.type = String(req.body.type || "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, "note")) {
+      payment.note = String(req.body.note || "").trim();
+    }
+
+    await syncGuestBilling(guest);
+    recalcAmounts(guest);
+    await guest.save();
+
+    emitGuestChanged(req.app.get("socket"), {
+      guestId: String(guest._id),
+      roomId: String(guest.room || ""),
+      status: guest.status,
+      paidAmount: Number(guest.paidAmount || 0),
+      debtAmount: Number(guest.debtAmount || 0),
+      reason: "guest_payment_updated",
+    });
+
+    const populated = await Guest.findById(guest._id).populate("room").lean();
+    return response.success(
+      res,
+      "To'lov turi yangilandi",
+      attachGuestRuntimeFlags(populated),
+    );
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const addGuestService = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
@@ -1395,6 +1447,7 @@ module.exports = {
   decideVipRequest,
   updateGuest,
   addGuestPayment,
+  updateGuestPayment,
   addGuestService,
   checkoutGuest,
   checkoutGuestsBulk,

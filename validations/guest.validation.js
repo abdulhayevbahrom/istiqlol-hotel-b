@@ -5,6 +5,7 @@ const guestBaseProperties = {
   passport: { type: "string" },
   birthDate: { type: "string", minLength: 1 },
   phone: { type: "string" },
+  email: { type: "string" },
   checkInAt: { type: "string" },
   guestType: { type: "string", enum: ["uzb", "chetellik"], default: "uzb" },
   isBlacklisted: { type: "boolean", default: false },
@@ -48,6 +49,7 @@ const createGuestsBulkSchema = {
           passport: { type: "string" },
           birthDate: { type: "string", minLength: 1 },
           phone: { type: "string" },
+          email: { type: "string" },
           note: { type: "string" },
           vip: { type: "boolean", default: false },
         },
@@ -66,6 +68,8 @@ const updateGuestSchema = {
     passport: { type: "string" },
     birthDate: { type: "string", minLength: 1 },
     phone: { type: "string" },
+    email: { type: "string" },
+    room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     checkInAt: { type: "string" },
     guestType: { type: "string", enum: ["uzb", "chetellik"] },
     isBlacklisted: { type: "boolean" },
@@ -120,6 +124,16 @@ const addPaymentSchema = {
   },
 };
 
+const updatePaymentSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type"],
+  properties: {
+    type: { type: "string", enum: paymentTypes },
+    note: { type: "string" },
+  },
+};
+
 const addGuestServiceSchema = {
   type: "object",
   additionalProperties: false,
@@ -161,6 +175,7 @@ module.exports = {
   guestPassportParamsSchema,
   bulkCheckoutGuestsSchema,
   addPaymentSchema,
+  updatePaymentSchema,
   addGuestServiceSchema,
   vipRequestIdParamsSchema,
   decideVipRequestSchema,

@@ -1,6 +1,7 @@
 const Room = require("../model/Room");
 const Guest = require("../model/Guest");
 const response = require("../utils/response");
+const { getHotelSettings } = require("../utils/hotelSettings");
 
 const parseLegacyRoomNumber = (value) => {
   const raw = String(value || "").trim().toUpperCase();
@@ -17,14 +18,21 @@ const normalizeKorpus = (value) => {
 const getOccupancyStatus = (activeCount, capacity) =>
   activeCount >= capacity ? "band" : "bosh";
 
+const normalizeCategory = (value) => String(value || "").trim();
+
 const createRoom = async (req, res) => {
   try {
     const payload = { ...req.body };
+    const hotelSettings = await getHotelSettings();
     const legacy = parseLegacyRoomNumber(payload.roomNumber);
     payload.roomNumber = legacy.roomNumber;
     payload.korpus = normalizeKorpus(payload.korpus || legacy.korpus);
     if (!payload.korpus) {
       return response.error(res, "Korpus A yoki B bo'lishi kerak");
+    }
+    payload.category = normalizeCategory(payload.category);
+    if (!hotelSettings.roomCategories.includes(payload.category)) {
+      return response.error(res, "Kategoriya sozlamalarda mavjud emas");
     }
 
     const exists = await Room.findOne({
@@ -68,6 +76,7 @@ const updateRoom = async (req, res) => {
     const { id } = req.params;
     const updates = { ...req.body };
     const current = await Room.findById(id);
+    const hotelSettings = await getHotelSettings();
 
     if (!current) return response.notFound(res, "Xona topilmadi");
 
@@ -98,6 +107,13 @@ const updateRoom = async (req, res) => {
         });
         if (exists) return response.error(res, "Bu xona raqami allaqachon mavjud");
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, "category")) {
+      const normalizedCategory = normalizeCategory(updates.category);
+      if (!hotelSettings.roomCategories.includes(normalizedCategory)) {
+        return response.error(res, "Kategoriya sozlamalarda mavjud emas");
+      }
+      updates.category = normalizedCategory;
     }
 
     const room = await Room.findByIdAndUpdate(id, updates, {

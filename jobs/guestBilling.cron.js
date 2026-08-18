@@ -121,6 +121,12 @@ const syncRoomsOccupancyByIds = async (roomIds = []) => {
   }
 };
 
+const syncAllRoomsOccupancy = async () => {
+  const rooms = await Room.find({}).select("_id").lean();
+  if (!rooms.length) return;
+  await syncRoomsOccupancyByIds(rooms.map((room) => room._id));
+};
+
 const runActivateDueBookingsJob = async (io) => {
   const now = new Date();
   const dueBookings = await Guest.find({
@@ -366,6 +372,7 @@ const runAutomaticCheckoutJob = async (io) => {
 
   await Guest.bulkWrite(ops, { ordered: false });
   await syncRoomsOccupancyByIds(roomIds);
+  await syncAllRoomsOccupancy();
   emitGuestChanged(io, {
     reason: "guest_auto_checked_out",
     count: ops.length,

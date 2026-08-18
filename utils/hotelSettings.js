@@ -4,6 +4,7 @@ const DEFAULT_HOTEL_SETTINGS = {
   hotelName: "Mehmonxona nomi",
   checkoutTime: "15:00",
   reminderTime: "12:00",
+  roomCategories: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
   logo: "",
   receiptThankYouText: "Tashrifingiz uchun rahmat! Yana sizni kutib qolamiz.",
 };
@@ -27,9 +28,14 @@ const getHotelSettings = async () => {
     settings = await Setting.create(DEFAULT_HOTEL_SETTINGS);
     settings = settings.toObject();
   }
+  const roomCategories =
+    Array.isArray(settings.roomCategories) && settings.roomCategories.length
+      ? settings.roomCategories
+      : DEFAULT_HOTEL_SETTINGS.roomCategories;
   return {
     ...DEFAULT_HOTEL_SETTINGS,
     ...settings,
+    roomCategories,
   };
 };
 

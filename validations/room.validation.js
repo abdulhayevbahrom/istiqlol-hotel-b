@@ -1,4 +1,3 @@
-const categories = ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"];
 const statuses = ["bosh", "band", "remont"];
 const korpusValues = ["A", "B"];
 
@@ -11,7 +10,7 @@ const createRoomSchema = {
     floor: { type: "number", minimum: 1 },
     korpus: { type: "string", enum: korpusValues },
     capacity: { type: "number", minimum: 1 },
-    category: { type: "string", enum: categories },
+    category: { type: "string", minLength: 1, maxLength: 80 },
     prices: {
       type: "object",
       additionalProperties: false,
@@ -35,7 +34,7 @@ const updateRoomSchema = {
     floor: { type: "number", minimum: 1 },
     korpus: { type: "string", enum: korpusValues },
     capacity: { type: "number", minimum: 1 },
-    category: { type: "string", enum: categories },
+    category: { type: "string", minLength: 1, maxLength: 80 },
     prices: {
       type: "object",
       additionalProperties: false,

@@ -32,7 +32,7 @@ const roomSchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      enum: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
+      trim: true,
     },
     status: {
       type: String,
