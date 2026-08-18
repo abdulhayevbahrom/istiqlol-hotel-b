@@ -786,12 +786,15 @@ const getOccupancy = async (req, res) => {
     }
 
     const guests = await Guest.find({
-      status: { $in: ["active", "booked"] },
+      status: { $in: ["active", "booked", "checked_out"] },
       checkInAt: { $lt: to },
-      checkoutDueAt: { $gt: from },
+      $or: [
+        { status: { $in: ["active", "booked"] }, checkoutDueAt: { $gt: from } },
+        { status: "checked_out", checkOutAt: { $gt: from } },
+      ],
     })
       .select(
-        "firstname lastname room status checkInAt bookedForAt checkoutDueAt stayDays note",
+        "firstname lastname room status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note",
       )
       .populate("room", "roomNumber floor category")
       .sort({ checkInAt: 1 })
