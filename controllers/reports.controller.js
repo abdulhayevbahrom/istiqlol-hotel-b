@@ -409,7 +409,7 @@ const getDailyReport = async (req, res) => {
     const dayStart = day.clone().startOf("day").toDate();
     const nextDayStart = day.clone().add(1, "day").startOf("day").toDate();
 
-    const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, guestsAtEnd, totalRooms] =
+    const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, totalRooms] =
       await Promise.all([
         Guest.aggregate([
           { $unwind: "$payments" },
@@ -452,10 +452,13 @@ const getDailyReport = async (req, res) => {
           { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
         ]).then((rows) => rows?.[0] || {}),
         Guest.find({
-          checkInAt: { $lt: nextDayStart },
-          $or: [{ checkOutAt: null }, { checkOutAt: { $gte: nextDayStart } }],
+          status: "active",
         })
-          .select("room totalAmount payments checkInAt checkOutAt")
+          .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
+          .select(
+            "firstname lastname room stayDays billableDays dailyRate totalAmount paidAmount debtAmount payments status checkInAt checkoutDueAt",
+          )
+          .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
         Room.countDocuments({ createdAt: { $lt: nextDayStart } }),
       ]);
@@ -472,16 +475,34 @@ const getDailyReport = async (req, res) => {
       { total: 0, naqd: 0, karta: 0, click: 0, bank: 0 },
     );
     const expenseTotal = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const occupiedRoomIds = new Set(guestsAtEnd.map((guest) => String(guest.room || "")));
-    const debtRows = guestsAtEnd.map((guest) => {
-      const paidByEnd = (guest.payments || []).reduce(
-        (sum, payment) => new Date(payment.createdAt) < nextDayStart
-          ? sum + Number(payment.amount || 0)
-          : sum,
-        0,
+    const activeGuestRows = activeGuests.map((guest) => {
+      const roomDoc = guest.room || {};
+      const fullName = `${guest.firstname || ""} ${guest.lastname || ""}`.trim();
+      const dailyRate = Number(guest.dailyRate || roomDoc.prices?.oddiy || 0);
+      const paidAmount = Number(guest.paidAmount || 0);
+      const checkInDay = moment(guest.checkInAt || dayStart).tz(TIMEZONE).startOf("day");
+      const daysStayedUntilReport = Math.max(
+        1,
+        day.clone().startOf("day").diff(checkInDay, "day") + 1,
       );
-      return Math.max(0, Number(guest.totalAmount || 0) - paidByEnd);
+      const totalDueUntilReport = dailyRate * daysStayedUntilReport;
+      const totalDebt = Math.max(0, totalDueUntilReport - paidAmount);
+      const oldDebt = Math.max(0, totalDebt - dailyRate);
+      const guestCount = 1;
+      return {
+        roomNumber: roomDoc.roomNumber || "-",
+        floor: roomDoc.floor || "-",
+        korpus: roomDoc.korpus || "-",
+        guestCount,
+        dailyRate,
+        oldDebt,
+        fullName,
+        totalDebt,
+      };
     });
+    const occupiedRoomIds = new Set(
+      activeGuestRows.map((guest) => String(guest.roomNumber || "")),
+    );
     const arrivals = await Guest.countDocuments({ checkInAt: { $gte: dayStart, $lt: nextDayStart } });
     const departures = await Guest.countDocuments({ checkOutAt: { $gte: dayStart, $lt: nextDayStart } });
 
@@ -515,18 +536,13 @@ const getDailyReport = async (req, res) => {
         availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRoomIds.size),
         arrivals,
         departures,
-        guests: guestsAtEnd.length,
+        guests: activeGuestRows.length,
       },
       debt: {
-        debtors: debtRows.filter((amount) => amount > 0).length,
-        total: debtRows.reduce((sum, amount) => sum + amount, 0),
+        debtors: activeGuestRows.filter((row) => row.totalDebt > 0).length,
+        total: activeGuestRows.reduce((sum, row) => sum + row.totalDebt, 0),
       },
-      payments: payments.map((payment) => ({
-        time: moment(payment.createdAt).tz(TIMEZONE).format("HH:mm"),
-        source: payment.source.trim(),
-        type: payment.type,
-        amount: Number(payment.amount || 0),
-      })),
+      guests: activeGuestRows,
     });
   } catch (error) {
     return response.serverError(res, error.message);

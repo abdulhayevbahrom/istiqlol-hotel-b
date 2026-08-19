@@ -258,6 +258,8 @@ const createGuest = async (req, res) => {
       dailyRate,
       stayDays,
       note = "",
+      initialPaymentAmount = 0,
+      initialPaymentType = "naqd",
     } = req.body;
 
     const normalizedPassport = String(passport || "").trim();
@@ -332,6 +334,10 @@ const createGuest = async (req, res) => {
     const isVipRequested = !isReservation && Boolean(vip);
     const acceptedBy = await buildActionBy(req.admin);
     const guestDailyRate = splitDailyRate(normalizedDailyRate, 1);
+    const initialPayment = Math.max(Number(initialPaymentAmount || 0), 0);
+    if (initialPayment > 0 && isVipRequested) {
+      return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
+    }
 
     const guest = await Guest.create({
       firstname,
@@ -352,9 +358,14 @@ const createGuest = async (req, res) => {
       bookedForAt,
       dailyRate: guestDailyRate,
       totalAmount: guestDailyRate * billing.billableDays,
-      paidAmount: 0,
-      debtAmount: isReservation ? 0 : guestDailyRate * billing.billableDays,
-      payments: [],
+      paidAmount: isReservation ? 0 : initialPayment,
+      debtAmount: isReservation
+        ? 0
+        : Math.max(guestDailyRate * billing.billableDays - initialPayment, 0),
+      payments:
+        !isReservation && initialPayment > 0
+          ? [{ amount: initialPayment, type: initialPaymentType, note: "Qabul qilish paytidagi to'lov" }]
+          : [],
       status: isReservation ? "booked" : "active",
       acceptedBy,
       checkInAt: baseCheckInAt,
@@ -426,6 +437,8 @@ const createGuestsBulk = async (req, res) => {
       bookedForDate,
       checkInAt,
       guests = [],
+      initialPaymentAmount = 0,
+      initialPaymentType = "naqd",
     } = req.body;
 
     if (!Array.isArray(guests) || guests.length < 1) {
@@ -516,6 +529,13 @@ const createGuestsBulk = async (req, res) => {
     );
 
     const guestDailyRate = splitDailyRate(normalizedDailyRate, normalizedGuests.length);
+    const totalInitialPayment = Math.max(Number(initialPaymentAmount || 0), 0);
+    if (totalInitialPayment > 0 && normalizedGuests.some((guest) => guest.vip)) {
+      return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
+    }
+    const paymentPerGuest = normalizedGuests.length
+      ? totalInitialPayment / normalizedGuests.length
+      : 0;
 
     const docs = normalizedGuests.map((guest) => {
       const isVipRequested = !isReservation && Boolean(guest.vip);
@@ -538,9 +558,14 @@ const createGuestsBulk = async (req, res) => {
         bookedForAt,
         dailyRate: guestDailyRate,
         totalAmount: guestDailyRate * billing.billableDays,
-        paidAmount: 0,
-        debtAmount: isReservation ? 0 : guestDailyRate * billing.billableDays,
-        payments: [],
+        paidAmount: isReservation ? 0 : paymentPerGuest,
+        debtAmount: isReservation
+          ? 0
+          : Math.max(guestDailyRate * billing.billableDays - paymentPerGuest, 0),
+        payments:
+          !isReservation && paymentPerGuest > 0
+            ? [{ amount: paymentPerGuest, type: initialPaymentType, note: "Qabul qilish paytidagi to'lov" }]
+            : [],
         status: isReservation ? "booked" : "active",
         acceptedBy,
         checkInAt: baseCheckInAt,
@@ -701,7 +726,7 @@ const getGuests = async (req, res) => {
         .sort(sort)
         .skip((page - 1) * limit)
         .limit(limit)
-        .populate("room", "roomNumber floor category")
+        .populate("room", "roomNumber floor korpus category")
         .lean(),
       Guest.countDocuments(filter),
     ]);
@@ -796,7 +821,7 @@ const getOccupancy = async (req, res) => {
       .select(
         "firstname lastname room status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note",
       )
-      .populate("room", "roomNumber floor category")
+      .populate("room", "roomNumber floor korpus category")
       .sort({ checkInAt: 1 })
       .lean();
 

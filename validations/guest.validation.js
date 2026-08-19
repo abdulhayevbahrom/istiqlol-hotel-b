@@ -16,6 +16,8 @@ const guestBaseProperties = {
   dailyRate: { type: "number", minimum: 0 },
   stayDays: { type: "number", minimum: 1 },
   note: { type: "string" },
+  initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
+  initialPaymentType: { type: "string", enum: paymentTypes },
 };
 
 const createGuestSchema = {
@@ -36,6 +38,8 @@ const createGuestsBulkSchema = {
     guestType: { type: "string", enum: ["uzb", "chetellik"], default: "uzb" },
     isBooking: { type: "boolean", default: false },
     bookedForDate: { type: "string", minLength: 1 },
+    initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
+    initialPaymentType: { type: "string", enum: paymentTypes },
     guests: {
       type: "array",
       minItems: 1,
