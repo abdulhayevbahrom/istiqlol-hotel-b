@@ -343,12 +343,14 @@ const getDashboardSummary = async (req, res) => {
             $group: {
               _id: "$status",
               count: { $sum: 1 },
+              capacityTotal: { $sum: { $ifNull: ["$capacity", 0] } },
             },
           },
           {
             $group: {
               _id: null,
               total: { $sum: "$count" },
+              capacityTotal: { $sum: "$capacityTotal" },
               byStatus: {
                 $push: {
                   k: "$_id",
@@ -361,6 +363,7 @@ const getDashboardSummary = async (req, res) => {
             $project: {
               _id: 0,
               total: 1,
+              capacityTotal: 1,
               byStatus: { $arrayToObject: "$byStatus" },
             },
           },
@@ -387,6 +390,7 @@ const getDashboardSummary = async (req, res) => {
       width: Math.max(760, daysInMonth * 34),
     };
     const totalRooms = Number(roomsFacet?.total || 0);
+    const totalCapacity = Number(roomsFacet?.capacityTotal || 0);
     const occupiedRooms = Number(roomsFacet?.byStatus?.band || 0);
     const freeRooms = Number(roomsFacet?.byStatus?.bosh || 0);
     const repairRooms = Number(roomsFacet?.byStatus?.remont || 0);
@@ -423,6 +427,7 @@ const getDashboardSummary = async (req, res) => {
         previousMonthRevenue,
         monthChange: formatChange(monthRevenue, previousMonthRevenue),
         activeGuests: Number(activeGuests || 0),
+        totalCapacity,
         bookedGuests: Number(bookedGuests || 0),
         debtorsCount: Number(debtorsAgg?.count || 0),
         debtorsAmount: Number(debtorsAgg?.totalDebt || 0),

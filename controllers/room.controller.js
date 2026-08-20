@@ -117,7 +117,7 @@ const updateRoom = async (req, res) => {
     }
 
     const room = await Room.findByIdAndUpdate(id, updates, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
 

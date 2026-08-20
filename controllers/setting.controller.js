@@ -55,7 +55,11 @@ const updateSettings = async (req, res) => {
     const settings = await Setting.findOneAndUpdate(
       {},
       { $set: updates },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      {
+        upsert: true,
+        returnDocument: "after",
+        setDefaultsOnInsert: true,
+      },
     ).lean();
 
     return response.success(

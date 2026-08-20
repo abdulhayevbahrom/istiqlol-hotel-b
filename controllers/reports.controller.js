@@ -406,8 +406,9 @@ const getDailyReport = async (req, res) => {
       return response.error(res, "Kelajak sanasi uchun hisobot olib bo'lmaydi");
     }
 
-    const dayStart = day.clone().startOf("day").toDate();
-    const nextDayStart = day.clone().add(1, "day").startOf("day").toDate();
+    // Hotel daily reports follow the operational day: 12:00 to 12:00.
+    const dayStart = day.clone().hour(12).minute(0).second(0).millisecond(0).toDate();
+    const nextDayStart = day.clone().add(1, "day").hour(12).minute(0).second(0).millisecond(0).toDate();
 
     const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, totalRooms] =
       await Promise.all([
@@ -488,20 +489,59 @@ const getDailyReport = async (req, res) => {
       const totalDueUntilReport = dailyRate * daysStayedUntilReport;
       const totalDebt = Math.max(0, totalDueUntilReport - paidAmount);
       const oldDebt = Math.max(0, totalDebt - dailyRate);
-      const guestCount = 1;
+      const paymentTotalsByType = (guest.payments || []).reduce(
+        (totals, payment) => {
+          const amount = Number(payment.amount || 0);
+          const type = String(payment.type || "").toLowerCase();
+          if (type === "naqd" || type === "cash") totals.cash += amount;
+          else if (type === "karta" || type === "card" || type === "click") totals.card += amount;
+          else if (type === "bank" || type === "transfer") totals.transfer += amount;
+          return totals;
+        },
+        { cash: 0, card: 0, transfer: 0 },
+      );
       return {
+        roomId: roomDoc._id,
         roomNumber: roomDoc.roomNumber || "-",
         floor: roomDoc.floor || "-",
         korpus: roomDoc.korpus || "-",
-        guestCount,
+        guestCount: 1,
         dailyRate,
+        breakfast: 0,
+        prepayment: paidAmount,
+        cash: paymentTotalsByType.cash,
+        card: paymentTotalsByType.card,
+        transfer: paymentTotalsByType.transfer,
         oldDebt,
         fullName,
         totalDebt,
       };
     });
+    const groupedGuestRows = Array.from(
+      activeGuestRows.reduce((rooms, guest) => {
+        const key = String(guest.roomId || guest.roomNumber || "");
+        const current = rooms.get(key);
+        if (!current) {
+          rooms.set(key, { ...guest, fullName: [guest.fullName] });
+          return rooms;
+        }
+        current.fullName.push(guest.fullName);
+        current.guestCount += guest.guestCount;
+        current.prepayment += guest.prepayment;
+        current.cash += guest.cash;
+        current.card += guest.card;
+        current.transfer += guest.transfer;
+        current.oldDebt += guest.oldDebt;
+        current.totalDebt += guest.totalDebt;
+        current.dailyRate += guest.dailyRate;
+        return rooms;
+      }, new Map()).values(),
+    ).map((guest) => ({
+      ...guest,
+      fullName: guest.fullName.filter(Boolean).join("\n"),
+    }));
     const occupiedRoomIds = new Set(
-      activeGuestRows.map((guest) => String(guest.roomNumber || "")),
+      groupedGuestRows.map((guest) => String(guest.roomNumber || "")),
     );
     const arrivals = await Guest.countDocuments({ checkInAt: { $gte: dayStart, $lt: nextDayStart } });
     const departures = await Guest.countDocuments({ checkOutAt: { $gte: dayStart, $lt: nextDayStart } });
@@ -536,13 +576,13 @@ const getDailyReport = async (req, res) => {
         availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRoomIds.size),
         arrivals,
         departures,
-        guests: activeGuestRows.length,
+        guests: activeGuests.length,
       },
       debt: {
-        debtors: activeGuestRows.filter((row) => row.totalDebt > 0).length,
-        total: activeGuestRows.reduce((sum, row) => sum + row.totalDebt, 0),
+        debtors: groupedGuestRows.filter((row) => row.totalDebt > 0).length,
+        total: groupedGuestRows.reduce((sum, row) => sum + row.totalDebt, 0),
       },
-      guests: activeGuestRows,
+      guests: groupedGuestRows,
     });
   } catch (error) {
     return response.serverError(res, error.message);

@@ -145,7 +145,7 @@ const updateExpense = async (req, res) => {
     if (updates.spentAt) updates.spentAt = new Date(updates.spentAt);
 
     const expense = await Expense.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
     if (!expense) return response.notFound(res, "Xarajat topilmadi");
