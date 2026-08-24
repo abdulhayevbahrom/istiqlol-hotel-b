@@ -19,6 +19,12 @@ const {
 } = require("../validations/expense.validation");
 const { updateSettingsSchema } = require("../validations/setting.validation");
 const {
+  createGroupBookingSchema,
+  updateGroupBookingSchema,
+  groupBookingIdParamsSchema,
+  addGroupPaymentSchema,
+} = require("../validations/groupBooking.validation");
+const {
   createEmployee,
   getEmployees,
   getEmployeeById,
@@ -53,6 +59,7 @@ const {
   updateGuestSchema,
   guestIdParamsSchema,
   guestPassportParamsSchema,
+  guestPaymentParamsSchema,
   bulkCheckoutGuestsSchema,
   addPaymentSchema,
   updatePaymentSchema,
@@ -106,6 +113,13 @@ const {
   cancelHallBooking,
   deleteHallBooking,
 } = require("../controllers/hallBooking.controller");
+const {
+  createGroupBooking,
+  getGroupBookings,
+  updateGroupBooking,
+  deleteGroupBooking,
+  addGroupPayment,
+} = require("../controllers/groupBooking.controller");
 
 router.post("/employee/login", validate(loginEmployeeSchema), loginEmployee);
 router.post(
@@ -130,6 +144,12 @@ router.delete(
   "/employee/:id",
   validate(employeeIdParamsSchema, "params"),
   deleteEmployee,
+);
+router.post(
+  "/group-booking/:id/payment",
+  validate(groupBookingIdParamsSchema, "params"),
+  validate(addGroupPaymentSchema),
+  addGroupPayment,
 );
 router.post("/room", validate(createRoomSchema), createRoom);
 router.get("/rooms", getRooms);
@@ -201,6 +221,23 @@ router.delete(
   deleteHallBooking,
 );
 router.post("/guest", validate(createGuestSchema), createGuest);
+router.post(
+  "/group-booking",
+  validate(createGroupBookingSchema),
+  createGroupBooking,
+);
+router.get("/group-bookings", getGroupBookings);
+router.put(
+  "/group-booking/:id",
+  validate(groupBookingIdParamsSchema, "params"),
+  validate(updateGroupBookingSchema),
+  updateGroupBooking,
+);
+router.delete(
+  "/group-booking/:id",
+  validate(groupBookingIdParamsSchema, "params"),
+  deleteGroupBooking,
+);
 router.post("/guests/bulk", validate(createGuestsBulkSchema), createGuestsBulk);
 router.get("/guests", getGuests);
 router.get("/occupancy", getOccupancy);
@@ -232,7 +269,7 @@ router.post(
 );
 router.put(
   "/guest/:id/payment/:paymentIndex",
-  validate(guestIdParamsSchema, "params"),
+  validate(guestPaymentParamsSchema, "params"),
   validate(updatePaymentSchema),
   updateGuestPayment,
 );

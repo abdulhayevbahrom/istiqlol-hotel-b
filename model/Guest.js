@@ -6,7 +6,7 @@ const paymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     type: {
       type: String,
-      enum: ["naqd", "click", "bank", "karta"],
+      enum: ["naqd", "bank", "karta"],
       required: true,
     },
     note: { type: String, trim: true, default: "" },
@@ -54,9 +54,15 @@ const guestSchema = new mongoose.Schema(
     firstname: { type: String, required: true, trim: true },
     lastname: { type: String, required: true, trim: true },
     passport: { type: String, trim: true, default: "" },
-    birthDate: { type: Date, required: true },
+    birthDate: { type: Date, default: null },
     phone: { type: String, trim: true, default: "" },
     email: { type: String, trim: true, default: "" },
+    organization: { type: String, trim: true, default: "" },
+    group: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupBooking",
+      default: null,
+    },
     guestType: { type: String, enum: ["uzb", "chetellik"], default: "uzb" },
     isBlacklisted: { type: Boolean, default: false },
 
@@ -80,6 +86,11 @@ const guestSchema = new mongoose.Schema(
 
     // Narx va qarzdorlik
     dailyRate: { type: Number, required: true, min: 0 },
+    mainPaymentType: {
+      type: String,
+      enum: ["naqd", "bank"],
+      default: "naqd",
+    },
     totalAmount: { type: Number, required: true, min: 0 },
     paidAmount: { type: Number, default: 0, min: 0 },
     debtAmount: { type: Number, default: 0, min: 0 },
@@ -110,6 +121,7 @@ guestSchema.index({ status: 1, bookedForAt: 1 });
 guestSchema.index({ status: 1, checkoutDueAt: 1, checkoutReminderAt: 1, createdAt: -1 });
 guestSchema.index({ status: 1, debtAmount: 1, createdAt: -1 });
 guestSchema.index({ room: 1, status: 1, createdAt: -1 });
+guestSchema.index({ group: 1, status: 1, createdAt: -1 });
 guestSchema.index({ guestType: 1, vip: 1, status: 1, createdAt: -1 });
 guestSchema.index({ checkInAt: -1 });
 guestSchema.index({ "payments.createdAt": -1 });

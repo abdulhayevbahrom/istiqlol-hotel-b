@@ -27,6 +27,77 @@ const getMonthBase = (monthQuery) => {
   return moment.tz(TIMEZONE).startOf("month");
 };
 
+const compareRoomRows = (a, b) => {
+  const korpusA = String(a?.korpus || "").trim();
+  const korpusB = String(b?.korpus || "").trim();
+  const korpusCompare = korpusA.localeCompare(korpusB, "uz", {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (korpusCompare !== 0) return korpusCompare;
+
+  const roomA = String(a?.roomNumber || "").trim();
+  const roomB = String(b?.roomNumber || "").trim();
+  const roomNumericA = Number(roomA);
+  const roomNumericB = Number(roomB);
+  const roomAIsNumeric = Number.isFinite(roomNumericA) && roomA !== "";
+  const roomBIsNumeric = Number.isFinite(roomNumericB) && roomB !== "";
+  if (roomAIsNumeric && roomBIsNumeric && roomNumericA !== roomNumericB) {
+    return roomNumericA - roomNumericB;
+  }
+
+  return roomA.localeCompare(roomB, "uz", {
+    numeric: true,
+    sensitivity: "base",
+  });
+};
+
+const splitBalance = (balance) => ({
+  prepayment: Math.max(0, balance),
+  debt: Math.max(0, -balance),
+});
+
+const getOperationalDay = (date) => {
+  const localDate = moment(date).tz(TIMEZONE);
+  if (localDate.hour() < 12) localDate.subtract(1, "day");
+  return localDate.startOf("day");
+};
+
+const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, dailyRate }) => {
+  const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
+  const previousBillableDays = Math.max(
+    0,
+    reportDay.clone().startOf("day").diff(checkInOperationalDay, "day"),
+  );
+  const payments = (guest.payments || []).reduce(
+    (totals, payment) => {
+      const createdAt = new Date(payment.createdAt);
+      const amount = Number(payment.amount || 0);
+      if (Number.isNaN(createdAt.getTime()) || createdAt >= nextDayStart) return totals;
+
+      if (createdAt < dayStart) {
+        totals.beforeDay += amount;
+        return totals;
+      }
+
+      const type = String(payment.type || "").toLowerCase();
+      if (type === "naqd" || type === "cash") totals.cash += amount;
+      else if (type === "karta" || type === "card" || type === "click") totals.card += amount;
+      else if (type === "bank" || type === "transfer") totals.transfer += amount;
+      return totals;
+    },
+    { beforeDay: 0, cash: 0, card: 0, transfer: 0 },
+  );
+
+  const opening = splitBalance(payments.beforeDay - dailyRate * previousBillableDays);
+  const todayPayments = payments.cash + payments.card + payments.transfer;
+  const closing = splitBalance(
+    opening.prepayment - opening.debt + todayPayments - dailyRate,
+  );
+
+  return { opening, closing, payments };
+};
+
 const getReportsSummary = async (req, res) => {
   try {
     const base = getMonthBase(req.query.month);
@@ -453,11 +524,15 @@ const getDailyReport = async (req, res) => {
           { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
         ]).then((rows) => rows?.[0] || {}),
         Guest.find({
-          status: "active",
+          checkInAt: { $lt: nextDayStart },
+          $or: [
+            { status: "active" },
+            { status: "checked_out", checkOutAt: { $gte: dayStart } },
+          ],
         })
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
           .select(
-            "firstname lastname room stayDays billableDays dailyRate totalAmount paidAmount debtAmount payments status checkInAt checkoutDueAt",
+            "firstname lastname organization room stayDays billableDays dailyRate totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
           )
           .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
@@ -479,42 +554,32 @@ const getDailyReport = async (req, res) => {
     const activeGuestRows = activeGuests.map((guest) => {
       const roomDoc = guest.room || {};
       const fullName = `${guest.firstname || ""} ${guest.lastname || ""}`.trim();
-      const dailyRate = Number(guest.dailyRate || roomDoc.prices?.oddiy || 0);
-      const paidAmount = Number(guest.paidAmount || 0);
-      const checkInDay = moment(guest.checkInAt || dayStart).tz(TIMEZONE).startOf("day");
-      const daysStayedUntilReport = Math.max(
-        1,
-        day.clone().startOf("day").diff(checkInDay, "day") + 1,
-      );
-      const totalDueUntilReport = dailyRate * daysStayedUntilReport;
-      const totalDebt = Math.max(0, totalDueUntilReport - paidAmount);
-      const oldDebt = Math.max(0, totalDebt - dailyRate);
-      const paymentTotalsByType = (guest.payments || []).reduce(
-        (totals, payment) => {
-          const amount = Number(payment.amount || 0);
-          const type = String(payment.type || "").toLowerCase();
-          if (type === "naqd" || type === "cash") totals.cash += amount;
-          else if (type === "karta" || type === "card" || type === "click") totals.card += amount;
-          else if (type === "bank" || type === "transfer") totals.transfer += amount;
-          return totals;
-        },
-        { cash: 0, card: 0, transfer: 0 },
-      );
+      const baseDailyRate = Number(guest.dailyRate || roomDoc.prices?.oddiy || 0);
+      const dailyRate = guest.vip ? 0 : baseDailyRate;
+      const balance = calculateDailyGuestBalance({
+        guest,
+        reportDay: day,
+        dayStart,
+        nextDayStart,
+        dailyRate,
+      });
       return {
         roomId: roomDoc._id,
         roomNumber: roomDoc.roomNumber || "-",
         floor: roomDoc.floor || "-",
         korpus: roomDoc.korpus || "-",
+        organization: String(guest.organization || "").trim(),
         guestCount: 1,
         dailyRate,
         breakfast: 0,
-        prepayment: paidAmount,
-        cash: paymentTotalsByType.cash,
-        card: paymentTotalsByType.card,
-        transfer: paymentTotalsByType.transfer,
-        oldDebt,
+        openingPrepayment: balance.opening.prepayment,
+        openingDebt: balance.opening.debt,
+        cash: balance.payments.cash,
+        card: balance.payments.card,
+        transfer: balance.payments.transfer,
         fullName,
-        totalDebt,
+        closingPrepayment: balance.closing.prepayment,
+        closingDebt: balance.closing.debt,
       };
     });
     const groupedGuestRows = Array.from(
@@ -527,22 +592,22 @@ const getDailyReport = async (req, res) => {
         }
         current.fullName.push(guest.fullName);
         current.guestCount += guest.guestCount;
-        current.prepayment += guest.prepayment;
+        current.openingPrepayment += guest.openingPrepayment;
+        current.openingDebt += guest.openingDebt;
         current.cash += guest.cash;
         current.card += guest.card;
         current.transfer += guest.transfer;
-        current.oldDebt += guest.oldDebt;
-        current.totalDebt += guest.totalDebt;
+        current.closingPrepayment += guest.closingPrepayment;
+        current.closingDebt += guest.closingDebt;
         current.dailyRate += guest.dailyRate;
+        current.organization = current.organization || guest.organization;
         return rooms;
       }, new Map()).values(),
     ).map((guest) => ({
       ...guest,
       fullName: guest.fullName.filter(Boolean).join("\n"),
-    }));
-    const occupiedRoomIds = new Set(
-      groupedGuestRows.map((guest) => String(guest.roomNumber || "")),
-    );
+    })).sort(compareRoomRows);
+    const occupiedRooms = groupedGuestRows.length;
     const arrivals = await Guest.countDocuments({ checkInAt: { $gte: dayStart, $lt: nextDayStart } });
     const departures = await Guest.countDocuments({ checkOutAt: { $gte: dayStart, $lt: nextDayStart } });
 
@@ -572,15 +637,15 @@ const getDailyReport = async (req, res) => {
         transfer: paymentTotals.bank,
       },
       operations: {
-        occupiedRooms: occupiedRoomIds.size,
-        availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRoomIds.size),
+        occupiedRooms,
+        availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRooms),
         arrivals,
         departures,
         guests: activeGuests.length,
       },
       debt: {
-        debtors: groupedGuestRows.filter((row) => row.totalDebt > 0).length,
-        total: groupedGuestRows.reduce((sum, row) => sum + row.totalDebt, 0),
+        debtors: groupedGuestRows.filter((row) => row.closingDebt > 0).length,
+        total: groupedGuestRows.reduce((sum, row) => sum + row.closingDebt, 0),
       },
       guests: groupedGuestRows,
     });
@@ -590,6 +655,7 @@ const getDailyReport = async (req, res) => {
 };
 
 module.exports = {
+  calculateDailyGuestBalance,
   getDailyReport,
   getReportsSummary,
 };

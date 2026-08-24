@@ -10,7 +10,6 @@ const WEEKDAY_LABELS = ["Yak", "Dush", "Sesh", "Chor", "Pay", "Ju", "Shan"];
 const PAYMENT_TYPES = [
   { type: "naqd", label: "Naqd pul" },
   { type: "karta", label: "Plastik karta" },
-  { type: "click", label: "Click" },
   { type: "bank", label: "Bank o'tkazma" },
 ];
 

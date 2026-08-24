@@ -1,4 +1,4 @@
-const paymentTypes = ["naqd", "click", "bank", "karta"];
+const paymentTypes = ["naqd", "bank", "karta"];
 const guestBaseProperties = {
   firstname: { type: "string", minLength: 1 },
   lastname: { type: "string", minLength: 1 },
@@ -6,6 +6,7 @@ const guestBaseProperties = {
   birthDate: { type: "string", minLength: 1 },
   phone: { type: "string" },
   email: { type: "string" },
+  organization: { type: "string" },
   checkInAt: { type: "string" },
   guestType: { type: "string", enum: ["uzb", "chetellik"], default: "uzb" },
   isBlacklisted: { type: "boolean", default: false },
@@ -14,6 +15,7 @@ const guestBaseProperties = {
   bookedForDate: { type: "string", minLength: 1 },
   room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
   dailyRate: { type: "number", minimum: 0 },
+  mainPaymentType: { type: "string", enum: ["naqd", "bank"], default: "naqd" },
   stayDays: { type: "number", minimum: 1 },
   note: { type: "string" },
   initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
@@ -23,7 +25,7 @@ const guestBaseProperties = {
 const createGuestSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["firstname", "lastname", "birthDate", "room", "dailyRate", "stayDays"],
+  required: ["firstname", "lastname", "room", "dailyRate", "stayDays"],
   properties: guestBaseProperties,
 };
 
@@ -46,7 +48,7 @@ const createGuestsBulkSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["firstname", "lastname", "birthDate"],
+        required: ["firstname", "lastname"],
         properties: {
           firstname: { type: "string", minLength: 1 },
           lastname: { type: "string", minLength: 1 },
@@ -54,6 +56,7 @@ const createGuestsBulkSchema = {
           birthDate: { type: "string", minLength: 1 },
           phone: { type: "string" },
           email: { type: "string" },
+          organization: { type: "string" },
           note: { type: "string" },
           vip: { type: "boolean", default: false },
         },
@@ -73,6 +76,7 @@ const updateGuestSchema = {
     birthDate: { type: "string", minLength: 1 },
     phone: { type: "string" },
     email: { type: "string" },
+    organization: { type: "string" },
     room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     checkInAt: { type: "string" },
     guestType: { type: "string", enum: ["uzb", "chetellik"] },
@@ -101,6 +105,16 @@ const guestPassportParamsSchema = {
   required: ["passport"],
   properties: {
     passport: { type: "string", minLength: 1, maxLength: 64 },
+  },
+};
+
+const guestPaymentParamsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "paymentIndex"],
+  properties: {
+    id: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
+    paymentIndex: { type: "string", pattern: "^[0-9]+$" },
   },
 };
 
@@ -133,6 +147,7 @@ const updatePaymentSchema = {
   additionalProperties: false,
   required: ["type"],
   properties: {
+    amount: { type: "number", minimum: 0, multipleOf: 1 },
     type: { type: "string", enum: paymentTypes },
     note: { type: "string" },
   },
@@ -183,4 +198,5 @@ module.exports = {
   addGuestServiceSchema,
   vipRequestIdParamsSchema,
   decideVipRequestSchema,
+  guestPaymentParamsSchema,
 };
