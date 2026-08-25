@@ -1,7 +1,7 @@
 const Room = require("../model/Room");
-const Guest = require("../model/Guest");
 const response = require("../utils/response");
 const { getHotelSettings } = require("../utils/hotelSettings");
+const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
 
 const parseLegacyRoomNumber = (value) => {
   const raw = String(value || "").trim().toUpperCase();
@@ -15,9 +15,6 @@ const normalizeKorpus = (value) => {
   const text = String(value || "").trim().toUpperCase();
   return ["A", "B"].includes(text) ? text : "";
 };
-const getOccupancyStatus = (activeCount, capacity) =>
-  activeCount >= capacity ? "band" : "bosh";
-
 const normalizeCategory = (value) => String(value || "").trim();
 
 const createRoom = async (req, res) => {
@@ -125,18 +122,11 @@ const updateRoom = async (req, res) => {
       Object.prototype.hasOwnProperty.call(updates, "capacity") ||
       Object.prototype.hasOwnProperty.call(updates, "status")
     ) {
-      const activeCount = await Guest.countDocuments({
-        room: room._id,
-        status: "active",
-      });
-      room.activeGuestsCount = activeCount;
-      if (room.status !== "remont") {
-        room.status = getOccupancyStatus(activeCount, room.capacity);
-      }
-      await room.save();
+      await syncRoomsOccupancyByIds([room._id]);
     }
 
-    return response.success(res, "Xona yangilandi", room);
+    const nextRoom = await Room.findById(room._id);
+    return response.success(res, "Xona yangilandi", nextRoom);
   } catch (error) {
     return response.serverError(res, error.message);
   }

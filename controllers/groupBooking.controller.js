@@ -3,6 +3,7 @@ const Guest = require("../model/Guest");
 const Room = require("../model/Room");
 const VipRequest = require("../model/VipRequest");
 const response = require("../utils/response");
+const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
 const { getHotelSettings, applyTimeToDate } = require("../utils/hotelSettings");
 
 const parseBookingStart = (value) => {
@@ -328,16 +329,7 @@ const updateGroupBooking = async (req, res) => {
 };
 
 const syncGroupRooms = async (roomIds) => {
-  for (const roomId of [...new Set(roomIds.map(String))]) {
-    const room = await Room.findById(roomId);
-    if (!room) continue;
-    const activeCount = await Guest.countDocuments({ room: roomId, status: "active" });
-    room.activeGuestsCount = activeCount;
-    if (room.status !== "remont") {
-      room.status = activeCount >= Number(room.capacity || 0) ? "band" : "bosh";
-    }
-    await room.save();
-  }
+  await syncRoomsOccupancyByIds(roomIds);
 };
 
 const deleteGroupBooking = async (req, res) => {

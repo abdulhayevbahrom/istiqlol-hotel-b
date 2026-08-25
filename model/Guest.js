@@ -100,7 +100,7 @@ const guestSchema = new mongoose.Schema(
     // Holat va kim bajargani
     status: {
       type: String,
-      enum: ["booked", "active", "checked_out"],
+      enum: ["booked", "active", "checked_out", "cancelled"],
       default: "active",
     },
     bookedForAt: { type: Date, default: null },
@@ -108,6 +108,25 @@ const guestSchema = new mongoose.Schema(
     checkoutBy: { type: actionBySchema, default: null },
     checkInAt: { type: Date, default: Date.now },
     checkOutAt: { type: Date, default: null },
+
+    // Tashqi bron kanali ma'lumotlari. Karta rekvizitlari ataylab
+    // saqlanmaydi; faqat bronni takrorlamasdan yangilash uchun zarur IDlar.
+    source: {
+      type: String,
+      enum: ["manual", "booking_com"],
+      default: "manual",
+    },
+    externalHotelId: { type: String, trim: true, default: "" },
+    externalReservationId: { type: String, trim: true, default: "" },
+    externalReservationUnitId: { type: String, trim: true, default: "" },
+    externalRoomTypeId: { type: String, trim: true, default: "" },
+    externalReservationStatus: { type: String, trim: true, default: "" },
+    externalBookedAt: { type: Date, default: null },
+    externalModifiedAt: { type: Date, default: null },
+    externalCurrency: { type: String, trim: true, uppercase: true, default: "" },
+    externalTotalAmount: { type: Number, min: 0, default: 0 },
+    blocksWholeRoom: { type: Boolean, default: false },
+    cancelledAt: { type: Date, default: null },
 
     // Qo'shimcha izoh
     note: { type: String, trim: true, default: "" },
@@ -126,5 +145,16 @@ guestSchema.index({ guestType: 1, vip: 1, status: 1, createdAt: -1 });
 guestSchema.index({ checkInAt: -1 });
 guestSchema.index({ "payments.createdAt": -1 });
 guestSchema.index({ checkOutAt: -1, status: 1 });
+guestSchema.index({ source: 1, externalReservationId: 1 });
+guestSchema.index(
+  { source: 1, externalReservationUnitId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      source: "booking_com",
+      externalReservationUnitId: { $type: "string" },
+    },
+  },
+);
 
 module.exports = mongoose.model("Guest", guestSchema);

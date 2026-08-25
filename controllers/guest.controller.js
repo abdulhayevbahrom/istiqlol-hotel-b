@@ -4,14 +4,19 @@ const VipRequest = require("../model/VipRequest");
 const Employee = require("../model/Employee");
 const Service = require("../model/Service");
 const mongoose = require("mongoose");
+const moment = require("moment-timezone");
 const response = require("../utils/response");
 const { hasFullAccess } = require("../utils/roleAccess");
 const {
   getHotelSettings,
   applyTimeToDate,
 } = require("../utils/hotelSettings");
+const {
+  syncRoomsOccupancyByIds,
+} = require("../utils/roomOccupancy");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const VIP_REQUEST_FIELDS = "status guest requestedBy decidedBy decidedAt note createdAt";
 const VIP_GUEST_FIELDS = "firstname lastname passport room vip vipRequestStatus";
 
@@ -206,74 +211,7 @@ const syncAllActiveGuestsBilling = async () => {
 };
 
 const syncRoomsOccupancyBatch = async (roomIds = []) => {
-  const uniqueRoomIds = [
-    ...new Set(
-      roomIds
-        .map((id) => String(id || "").trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
-    ),
-  ];
-  if (!uniqueRoomIds.length) return;
-  const objectRoomIds = uniqueRoomIds.map((id) => new mongoose.Types.ObjectId(id));
-
-  const [rooms, activeCounts] = await Promise.all([
-    Room.find({ _id: { $in: objectRoomIds } })
-      .select("_id capacity status activeGuestsCount")
-      .lean(),
-    Guest.aggregate([
-      {
-        $match: {
-          status: "active",
-          room: { $in: objectRoomIds },
-        },
-      },
-      {
-        $group: {
-          _id: "$room",
-          count: { $sum: 1 },
-        },
-      },
-    ]),
-  ]);
-
-  const activeMap = new Map(
-    activeCounts.map((item) => [String(item?._id || ""), Number(item?.count || 0)]),
-  );
-
-  const ops = [];
-  for (const room of rooms) {
-    const roomId = String(room?._id || "");
-    const activeCount = Number(activeMap.get(roomId) || 0);
-    const nextStatus =
-      room.status === "remont"
-        ? "remont"
-        : activeCount >= Number(room.capacity || 0)
-          ? "band"
-          : "bosh";
-
-    if (
-      Number(room.activeGuestsCount || 0) === activeCount &&
-      String(room.status || "") === nextStatus
-    ) {
-      continue;
-    }
-
-    ops.push({
-      updateOne: {
-        filter: { _id: room._id },
-        update: {
-          $set: {
-            activeGuestsCount: activeCount,
-            status: nextStatus,
-          },
-        },
-      },
-    });
-  }
-
-  if (ops.length) {
-    await Room.bulkWrite(ops, { ordered: false });
-  }
+  await syncRoomsOccupancyByIds(roomIds);
 };
 
 const syncRoomOccupancy = async (roomId) => {
@@ -330,8 +268,11 @@ const createGuest = async (req, res) => {
       );
     }
 
-    const activeCount = await Guest.countDocuments({ room, status: "active" });
-    if (activeCount >= roomDoc.capacity) {
+    const [activeCount, wholeRoomBlocked] = await Promise.all([
+      Guest.countDocuments({ room, status: "active" }),
+      Guest.exists({ room, status: "active", blocksWholeRoom: true }),
+    ]);
+    if (wholeRoomBlocked || activeCount >= roomDoc.capacity) {
       return response.error(res, "Xonada bo'sh joy yo'q");
     }
 
@@ -540,8 +481,14 @@ const createGuestsBulk = async (req, res) => {
         );
       }
     } else {
-      const activeCount = await Guest.countDocuments({ room, status: "active" });
-      if (activeCount + guests.length > Number(roomDoc.capacity || 0)) {
+      const [activeCount, wholeRoomBlocked] = await Promise.all([
+        Guest.countDocuments({ room, status: "active" }),
+        Guest.exists({ room, status: "active", blocksWholeRoom: true }),
+      ]);
+      if (
+        wholeRoomBlocked ||
+        activeCount + guests.length > Number(roomDoc.capacity || 0)
+      ) {
         return response.error(res, "Xonada barcha mijozlar uchun bo'sh joy yo'q");
       }
     }
@@ -764,12 +711,64 @@ const buildGuestsFilter = async ({
   return { filter };
 };
 
-const attachGuestRuntimeFlags = (guest) => {
-  const now = Date.now();
+const getAccruedStayDays = (guest, now = new Date()) => {
+  const safeStayDays = Math.max(Number(guest?.stayDays || 1), 1);
+  const checkIn = moment(guest?.checkInAt).tz(TIMEZONE);
+  const current = moment(now).tz(TIMEZONE);
+  if (!checkIn.isValid() || !current.isValid()) return 1;
+
+  const checkoutDue = moment(guest?.checkoutDueAt).tz(TIMEZONE);
+  if (checkoutDue.isValid() && current.isAfter(checkoutDue)) {
+    const extraDays = Math.floor(current.diff(checkoutDue) / DAY_MS) + 1;
+    return safeStayDays + extraDays;
+  }
+
+  const checkoutClock = checkoutDue.isValid()
+    ? checkoutDue.format("HH:mm")
+    : "12:00";
+  const [checkoutHour = 12, checkoutMinute = 0] = checkoutClock
+    .split(":")
+    .map(Number);
+  const checkoutPassed =
+    current.hour() > checkoutHour ||
+    (current.hour() === checkoutHour && current.minute() >= checkoutMinute);
+  const currentStayDay = Math.max(
+    current.clone().startOf("day").diff(checkIn.clone().startOf("day"), "day") +
+      (checkoutPassed ? 1 : 0),
+    1,
+  );
+
+  return Math.min(currentStayDay, safeStayDays);
+};
+
+const getAccruedGuestAmounts = (guest, now = new Date()) => {
+  const accruedStayDays = getAccruedStayDays(guest, now);
+  const servicesTotal = (guest?.services || []).reduce(
+    (sum, service) => sum + Number(service?.totalAmount || 0),
+    0,
+  );
+  const lodgingTotal = guest?.vip
+    ? 0
+    : Number(guest?.dailyRate || 0) * accruedStayDays;
+  const totalAmount = lodgingTotal + servicesTotal;
+  const debtAmount = guest?.vip
+    ? 0
+    : Math.max(totalAmount - Number(guest?.paidAmount || 0), 0);
+
+  return { accruedStayDays, totalAmount, debtAmount };
+};
+
+const attachGuestRuntimeFlags = (guest, nowValue = new Date()) => {
+  const now = new Date(nowValue).getTime();
   const checkoutReminderAt = new Date(guest.checkoutReminderAt || 0).getTime();
   const checkoutDueAt = new Date(guest.checkoutDueAt || 0).getTime();
+  const accruedAmounts =
+    guest?.status === "active"
+      ? getAccruedGuestAmounts(guest, new Date(now))
+      : null;
   return {
     ...guest,
+    ...(accruedAmounts || {}),
     isCheckoutReminderTime: now >= checkoutReminderAt && now < checkoutDueAt,
     isCheckoutOverdue: checkoutDueAt > 0 && now > checkoutDueAt,
   };
@@ -810,7 +809,7 @@ const getGuests = async (req, res) => {
     ]);
 
     const totalPages = Math.max(Math.ceil(total / limit), 1);
-    let items = itemsRaw.map(attachGuestRuntimeFlags);
+    let items = itemsRaw.map((guest) => attachGuestRuntimeFlags(guest));
     if (tab === "active") {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
@@ -909,7 +908,7 @@ const getOccupancy = async (req, res) => {
       ],
     })
       .select(
-        "firstname lastname room status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note",
+        "firstname lastname room status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note source externalReservationId externalRoomTypeId externalCurrency externalTotalAmount",
       )
       .populate("room", "roomNumber floor korpus category")
       .sort({ checkInAt: 1 })
@@ -1016,12 +1015,23 @@ const updateGuest = async (req, res) => {
       }
 
       if (guest.status !== "booked") {
-        const targetActiveCount = await Guest.countDocuments({
-          room: targetRoom._id,
-          status: "active",
-          _id: { $ne: guest._id },
-        });
-        if (targetActiveCount >= Number(targetRoom.capacity || 0)) {
+        const [targetActiveCount, wholeRoomBlocked] = await Promise.all([
+          Guest.countDocuments({
+            room: targetRoom._id,
+            status: "active",
+            _id: { $ne: guest._id },
+          }),
+          Guest.exists({
+            room: targetRoom._id,
+            status: "active",
+            blocksWholeRoom: true,
+            _id: { $ne: guest._id },
+          }),
+        ]);
+        if (
+          wholeRoomBlocked ||
+          targetActiveCount >= Number(targetRoom.capacity || 0)
+        ) {
           return response.error(res, "Xonada bo'sh joy yo'q");
         }
       }
@@ -1549,6 +1559,8 @@ const deleteGuest = async (req, res) => {
 };
 
 module.exports = {
+  getAccruedStayDays,
+  getAccruedGuestAmounts,
   createGuest,
   createGuestsBulk,
   getGuests,

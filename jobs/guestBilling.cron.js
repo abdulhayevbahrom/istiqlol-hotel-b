@@ -7,6 +7,9 @@ const {
   getHotelSettings,
   parseTime,
 } = require("../utils/hotelSettings");
+const {
+  syncRoomsOccupancyByIds,
+} = require("../utils/roomOccupancy");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -49,76 +52,6 @@ const buildBillingState = (
     checkoutDueAt,
     checkoutReminderAt,
   };
-};
-
-const syncRoomsOccupancyByIds = async (roomIds = []) => {
-  const normalizedRoomIds = [
-    ...new Set(
-      roomIds
-        .map((id) => String(id || "").trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
-    ),
-  ];
-  if (!normalizedRoomIds.length) return;
-  const objectRoomIds = normalizedRoomIds.map((id) => new mongoose.Types.ObjectId(id));
-
-  const [rooms, activeCounts] = await Promise.all([
-    Room.find({ _id: { $in: objectRoomIds } })
-      .select("_id capacity status activeGuestsCount")
-      .lean(),
-    Guest.aggregate([
-      {
-        $match: {
-          status: "active",
-          room: { $in: objectRoomIds },
-        },
-      },
-      {
-        $group: {
-          _id: "$room",
-          count: { $sum: 1 },
-        },
-      },
-    ]),
-  ]);
-
-  const activeMap = new Map(
-    activeCounts.map((item) => [String(item?._id || ""), Number(item?.count || 0)]),
-  );
-  const ops = [];
-  for (const room of rooms) {
-    const roomId = String(room?._id || "");
-    const activeCount = Number(activeMap.get(roomId) || 0);
-    const nextStatus =
-      room.status === "remont"
-        ? "remont"
-        : activeCount >= Number(room.capacity || 0)
-          ? "band"
-          : "bosh";
-
-    if (
-      Number(room.activeGuestsCount || 0) === activeCount &&
-      String(room.status || "") === nextStatus
-    ) {
-      continue;
-    }
-
-    ops.push({
-      updateOne: {
-        filter: { _id: room._id },
-        update: {
-          $set: {
-            activeGuestsCount: activeCount,
-            status: nextStatus,
-          },
-        },
-      },
-    });
-  }
-
-  if (ops.length) {
-    await Room.bulkWrite(ops, { ordered: false });
-  }
 };
 
 const syncAllRoomsOccupancy = async () => {

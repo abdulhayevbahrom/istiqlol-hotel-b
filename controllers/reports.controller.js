@@ -98,6 +98,16 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, 
   return { opening, closing, payments };
 };
 
+const getDailyActiveGuestFilter = ({ dayStart, nextDayStart }) => ({
+  checkInAt: { $lt: nextDayStart },
+  $or: [
+    { status: "active" },
+    // Occupancy intervals are half-open: a checkout exactly at dayStart
+    // belongs to the previous operational day, not the new one.
+    { status: "checked_out", checkOutAt: { $gt: dayStart } },
+  ],
+});
+
 const getReportsSummary = async (req, res) => {
   try {
     const base = getMonthBase(req.query.month);
@@ -523,13 +533,7 @@ const getDailyReport = async (req, res) => {
           { $match: { "services.usedAt": { $gte: dayStart, $lt: nextDayStart } } },
           { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
         ]).then((rows) => rows?.[0] || {}),
-        Guest.find({
-          checkInAt: { $lt: nextDayStart },
-          $or: [
-            { status: "active" },
-            { status: "checked_out", checkOutAt: { $gte: dayStart } },
-          ],
-        })
+        Guest.find(getDailyActiveGuestFilter({ dayStart, nextDayStart }))
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
           .select(
             "firstname lastname organization room stayDays billableDays dailyRate totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
@@ -656,6 +660,7 @@ const getDailyReport = async (req, res) => {
 
 module.exports = {
   calculateDailyGuestBalance,
+  getDailyActiveGuestFilter,
   getDailyReport,
   getReportsSummary,
 };

@@ -54,6 +54,10 @@ const {
 } = require("../controllers/setting.controller");
 const { sendSupportMessage } = require("../controllers/support.controller");
 const {
+  getStatus: getBookingStatus,
+  syncNow: syncBookingNow,
+} = require("../controllers/booking.controller");
+const {
   createGuestSchema,
   createGuestsBulkSchema,
   updateGuestSchema,
@@ -241,6 +245,8 @@ router.delete(
 router.post("/guests/bulk", validate(createGuestsBulkSchema), createGuestsBulk);
 router.get("/guests", getGuests);
 router.get("/occupancy", getOccupancy);
+router.get("/booking/status", getBookingStatus);
+router.post("/booking/sync", syncBookingNow);
 router.get("/vip-requests/count", getVipRequestsCount);
 router.get("/vip-requests", getVipRequests);
 router.post(

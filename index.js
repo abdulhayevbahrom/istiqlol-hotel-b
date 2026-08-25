@@ -12,6 +12,9 @@ const router = require("./routes/router");
 const authMiddleware = require("./middleware/AuthMiddleware");
 const { createServer } = require("node:http");
 const { startGuestBillingCron } = require("./jobs/guestBilling.cron");
+const {
+  startBookingSync,
+} = require("./integrations/booking/booking.service");
 
 const soket = require("./socket");
 
@@ -49,16 +52,26 @@ app.use(cors(corsOptions));
 // ⬇️ Mongoose pluginni shu yerda ulaymiz
 mongoose.plugin(applyTimezone);
 
-(async () => await connectDB())();
-
 // Socket.IO sozlamalari
 app.set("socket", io);
 soket.connect(io);
-startGuestBillingCron(io);
 
 app.use("/api", authMiddleware, router); // Routerlarni ulash
 app.get("/", (req, res) => res.send("Salom dunyo")); // Bosh sahifa
 app.use(notfound); // 404 middleware
 
-// Serverni ishga tushirish
-server.listen(PORT, () => console.log(`http://localhost:${PORT}`));
+// Booking.com navbatini faqat MongoDB tayyor bo'lgandan keyin o'qiymiz.
+// Aks holda Booking xabari API navbatidan olinib, lokal bazaga yozilmay qolishi mumkin.
+const startServer = async () => {
+  try {
+    await connectDB();
+    startGuestBillingCron(io);
+    startBookingSync(io);
+    server.listen(PORT, () => console.log(`http://localhost:${PORT}`));
+  } catch (error) {
+    console.error("Server ishga tushmadi:", error.message);
+    process.exitCode = 1;
+  }
+};
+
+startServer();

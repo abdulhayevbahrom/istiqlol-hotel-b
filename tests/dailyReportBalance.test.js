@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const moment = require("moment-timezone");
-const { calculateDailyGuestBalance } = require("../controllers/reports.controller");
+const {
+  calculateDailyGuestBalance,
+  getDailyActiveGuestFilter,
+} = require("../controllers/reports.controller");
 
 const timezone = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const reportDay = moment.tz("2026-08-24", "YYYY-MM-DD", timezone);
@@ -59,4 +62,16 @@ test("payments after the report cutoff are excluded", () => {
 
   assert.equal(result.payments.transfer, 0);
   assert.deepEqual(result.closing, { prepayment: 0, debt: 300000 });
+});
+
+test("checkout exactly at operational day start belongs to the previous day", () => {
+  const filter = getDailyActiveGuestFilter({ dayStart, nextDayStart });
+
+  assert.deepEqual(filter, {
+    checkInAt: { $lt: nextDayStart },
+    $or: [
+      { status: "active" },
+      { status: "checked_out", checkOutAt: { $gt: dayStart } },
+    ],
+  });
 });
