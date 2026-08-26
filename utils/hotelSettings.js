@@ -2,7 +2,7 @@ const Setting = require("../model/Setting");
 
 const DEFAULT_HOTEL_SETTINGS = {
   hotelName: "Mehmonxona nomi",
-  checkoutTime: "15:00",
+  checkoutTime: "12:00",
   reminderTime: "12:00",
   roomCategories: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
   logo: "",
@@ -20,6 +20,20 @@ const applyTimeToDate = (baseDate, time) => {
   const { hour, minute } = parseTime(time);
   date.setHours(hour, minute, 0, 0);
   return date;
+};
+
+const calculateCheckoutDueAt = (
+  checkInAt,
+  stayDays,
+  checkoutTime = "12:00",
+) => {
+  const checkIn = new Date(checkInAt);
+  const safeStayDays = Math.max(Number(stayDays || 1), 1);
+  const checkoutDueAt = applyTimeToDate(checkIn, checkoutTime);
+  const arrivedBeforeCheckout = checkIn.getTime() < checkoutDueAt.getTime();
+  const daysToAdd = safeStayDays - (arrivedBeforeCheckout ? 1 : 0);
+  checkoutDueAt.setDate(checkoutDueAt.getDate() + daysToAdd);
+  return checkoutDueAt;
 };
 
 const getHotelSettings = async () => {
@@ -43,5 +57,6 @@ module.exports = {
   DEFAULT_HOTEL_SETTINGS,
   parseTime,
   applyTimeToDate,
+  calculateCheckoutDueAt,
   getHotelSettings,
 };

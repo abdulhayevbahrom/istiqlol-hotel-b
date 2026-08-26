@@ -184,7 +184,7 @@ const upsertReservationUnit = async ({
   const checkInAt = dateAtHotelTime(roomUnit.arrivalDate, "12:00");
   const checkoutDueAt = dateAtHotelTime(
     roomUnit.departureDate,
-    hotelSettings.checkoutTime || "15:00",
+    hotelSettings.checkoutTime || "12:00",
   );
   const checkoutReminderAt = dateAtHotelTime(
     roomUnit.departureDate,

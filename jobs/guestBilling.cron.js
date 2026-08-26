@@ -4,6 +4,7 @@ const Guest = require("../model/Guest");
 const Room = require("../model/Room");
 const {
   applyTimeToDate,
+  calculateCheckoutDueAt,
   getHotelSettings,
   parseTime,
 } = require("../utils/hotelSettings");
@@ -31,11 +32,11 @@ const buildBillingState = (
 ) => {
   const safeStayDays = Math.max(Number(stayDays || 1), 1);
 
-  const checkoutDueAt = applyTimeToDate(
+  const checkoutDueAt = calculateCheckoutDueAt(
     checkInAt,
-    hotelSettings.checkoutTime || "15:00",
+    safeStayDays,
+    hotelSettings.checkoutTime || "12:00",
   );
-  checkoutDueAt.setDate(checkoutDueAt.getDate() + safeStayDays);
 
   const checkoutReminderAt = applyTimeToDate(
     checkoutDueAt,
@@ -287,7 +288,7 @@ const runAutomaticCheckoutJob = async (io, cutoffAt = new Date()) => {
         update: {
           $set: {
             status: "checked_out",
-            checkOutAt: guest.checkoutDueAt || cutoff,
+            checkOutAt: getAutomaticCheckoutAt(guest.checkoutDueAt, cutoff),
             checkoutBy: {
               userId: "system",
               role: "system",
@@ -313,18 +314,32 @@ const runAutomaticCheckoutJob = async (io, cutoffAt = new Date()) => {
   });
 };
 
+const getAutomaticCheckoutAt = (checkoutDueAt, executedAt = new Date()) => {
+  const scheduled = new Date(checkoutDueAt);
+  if (!Number.isNaN(scheduled.getTime())) return scheduled;
+  return new Date(executedAt);
+};
+
 const getAutomaticCheckoutWindow = (
   now = new Date(),
   checkoutTime = "12:00",
 ) => {
   const nowTz = moment(now).tz(APP_TIMEZONE);
   const checkout = parseTime(checkoutTime);
+  const scheduledCheckout = nowTz
+    .clone()
+    .hour(checkout.hour)
+    .minute(checkout.minute)
+    .second(0)
+    .millisecond(0);
   const nextMinute = nowTz.clone().add(1, "minute").startOf("minute");
   const isEarlyMinute =
     nextMinute.hour() === checkout.hour &&
     nextMinute.minute() === checkout.minute;
   const isExactMinute =
     nowTz.hour() === checkout.hour && nowTz.minute() === checkout.minute;
+  const isDueOrPast =
+    isExactMinute || nowTz.isAfter(scheduledCheckout);
   const cutoff = isEarlyMinute
     ? nextMinute
     : nowTz.clone();
@@ -332,6 +347,7 @@ const getAutomaticCheckoutWindow = (
   return {
     isEarlyMinute,
     isExactMinute,
+    isDueOrPast,
     cutoffAt: cutoff.toDate(),
     key: `${cutoff.format("YYYY-MM-DD")}-${checkoutTime}`,
   };
@@ -356,7 +372,6 @@ const startGuestBillingCron = (io) => {
       const minute = nowTz.minute();
       const hotelSettings = await getHotelSettings();
       const reminder = parseTime(hotelSettings.reminderTime);
-      const checkout = parseTime(hotelSettings.checkoutTime);
       const automaticCheckout = getAutomaticCheckoutWindow(
         nowTz.toDate(),
         hotelSettings.checkoutTime,
@@ -395,8 +410,8 @@ const startGuestBillingCron = (io) => {
         }
       }
 
-      if (hour === checkout.hour && minute === checkout.minute) {
-        const overdueKey = `${dayKey}-${hotelSettings.checkoutTime}`;
+      if (automaticCheckout.isDueOrPast && !automaticCheckout.isEarlyMinute) {
+        const overdueKey = automaticCheckout.key;
 
         // 11:59 trigger o'tmay qolsa, 12:00 da ham avval checkout qilinadi.
         // Shundan keyingina overdue hisoblash ishlaydi va ortiqcha kun yozilmaydi.
@@ -445,6 +460,7 @@ const startGuestBillingCron = (io) => {
 };
 
 module.exports = {
+  getAutomaticCheckoutAt,
   getAutomaticCheckoutWindow,
   startGuestBillingCron,
 };

@@ -79,6 +79,7 @@ const updateGuestSchema = {
     organization: { type: "string" },
     room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     checkInAt: { type: "string" },
+    checkOutAt: { type: "string", minLength: 1 },
     guestType: { type: "string", enum: ["uzb", "chetellik"] },
     isBlacklisted: { type: "boolean" },
     vip: { type: "boolean" },
@@ -128,6 +129,15 @@ const bulkCheckoutGuestsSchema = {
       minItems: 1,
       items: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     },
+  },
+};
+
+const continueGuestStaySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["additionalDays"],
+  properties: {
+    additionalDays: { type: "number", minimum: 1, maximum: 365, multipleOf: 1 },
   },
 };
 
@@ -193,6 +203,7 @@ module.exports = {
   guestIdParamsSchema,
   guestPassportParamsSchema,
   bulkCheckoutGuestsSchema,
+  continueGuestStaySchema,
   addPaymentSchema,
   updatePaymentSchema,
   addGuestServiceSchema,

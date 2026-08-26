@@ -14,7 +14,7 @@ const parseBookingStart = (value) => {
 };
 
 const buildBookingEnd = (start, stayDays, checkoutTime) => {
-  const end = applyTimeToDate(start, checkoutTime || "15:00");
+  const end = applyTimeToDate(start, checkoutTime || "12:00");
   end.setDate(end.getDate() + Math.max(Number(stayDays || 1), 1));
   return end;
 };

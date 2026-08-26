@@ -4,6 +4,8 @@ const {
   getAccruedStayDays,
   getAccruedGuestAmounts,
   getGuestPayableAmount,
+  buildContinuedGuestState,
+  getCompletedStayDays,
 } = require("../controllers/guest.controller");
 
 const guest = {
@@ -63,4 +65,59 @@ test("guest can prepay the full planned stay while current debt stays accrued", 
   };
 
   assert.equal(getGuestPayableAmount(sixDayGuest), 1560000);
+});
+
+test("continuing a checked-out guest preserves one history and extends checkout", () => {
+  const continued = buildContinuedGuestState({
+    guest: {
+      checkInAt: new Date(2026, 7, 26, 12, 35),
+      stayDays: 1,
+      dailyRate: 300000,
+      paidAmount: 300000,
+      vip: false,
+      services: [],
+    },
+    additionalDays: 1,
+    now: new Date(2026, 7, 27, 12, 0, 45),
+    hotelSettings: { checkoutTime: "12:00", reminderTime: "11:00" },
+  });
+
+  assert.equal(continued.stayDays, 2);
+  assert.equal(continued.billableDays, 2);
+  assert.equal(continued.checkoutDueAt.getDate(), 28);
+  assert.equal(continued.checkoutDueAt.getHours(), 12);
+  assert.equal(continued.totalAmount, 600000);
+  assert.equal(continued.debtAmount, 300000);
+});
+
+test("continuation at noon starts day two for a guest who arrived before noon", () => {
+  const preNoonGuest = {
+    checkInAt: new Date(2026, 7, 26, 1, 45),
+    checkoutDueAt: new Date(2026, 7, 27, 12, 0),
+    stayDays: 2,
+  };
+
+  assert.equal(
+    getAccruedStayDays(preNoonGuest, new Date(2026, 7, 26, 12, 0, 45)),
+    2,
+  );
+});
+
+test("edited checkout date recalculates completed hotel days", () => {
+  assert.equal(
+    getCompletedStayDays(
+      new Date(2026, 7, 26, 1, 45),
+      new Date(2026, 7, 26, 12, 0),
+      "12:00",
+    ),
+    1,
+  );
+  assert.equal(
+    getCompletedStayDays(
+      new Date(2026, 7, 26, 1, 45),
+      new Date(2026, 7, 27, 12, 0),
+      "12:00",
+    ),
+    2,
+  );
 });

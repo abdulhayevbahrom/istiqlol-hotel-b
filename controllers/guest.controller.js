@@ -10,6 +10,7 @@ const { hasFullAccess } = require("../utils/roleAccess");
 const {
   getHotelSettings,
   applyTimeToDate,
+  calculateCheckoutDueAt,
 } = require("../utils/hotelSettings");
 const {
   syncRoomsOccupancyByIds,
@@ -80,11 +81,11 @@ const buildBillingState = (
 ) => {
   const safeStayDays = Math.max(Number(stayDays || 1), 1);
 
-  const checkoutDueAt = applyTimeToDate(
+  const checkoutDueAt = calculateCheckoutDueAt(
     checkInAt,
-    hotelSettings.checkoutTime || "15:00",
+    safeStayDays,
+    hotelSettings.checkoutTime || "12:00",
   );
-  checkoutDueAt.setDate(checkoutDueAt.getDate() + safeStayDays);
 
   const checkoutReminderAt = applyTimeToDate(
     checkoutDueAt,
@@ -115,6 +116,35 @@ const recalcAmounts = (guest) => {
   const paid = Number(guest.paidAmount || 0);
   const total = Number(guest.totalAmount || 0);
   guest.debtAmount = Math.max(total - paid, 0);
+};
+
+const getCompletedStayDays = (
+  checkInAt,
+  checkOutAt,
+  checkoutTime = "12:00",
+) => {
+  const checkIn = moment(checkInAt).tz(TIMEZONE);
+  const checkOut = moment(checkOutAt).tz(TIMEZONE);
+  if (!checkIn.isValid() || !checkOut.isValid()) return 1;
+
+  const [checkoutHour = 12, checkoutMinute = 0] = String(checkoutTime)
+    .split(":")
+    .map(Number);
+  const cutoffMinutes = checkoutHour * 60 + checkoutMinute;
+  const checkInMinutes = checkIn.hour() * 60 + checkIn.minute();
+  const checkOutMinutes = checkOut.hour() * 60 + checkOut.minute();
+  const checkInOperationalDay = checkIn.clone().startOf("day");
+  const checkOutOperationalDay = checkOut.clone().startOf("day");
+
+  if (checkInMinutes < cutoffMinutes) checkInOperationalDay.subtract(1, "day");
+  if (checkOutMinutes <= cutoffMinutes) {
+    checkOutOperationalDay.subtract(1, "day");
+  }
+
+  return Math.max(
+    checkOutOperationalDay.diff(checkInOperationalDay, "day") + 1,
+    1,
+  );
 };
 
 const splitDailyRate = (totalDailyRate, guestCount = 1) => {
@@ -216,6 +246,34 @@ const syncRoomsOccupancyBatch = async (roomIds = []) => {
 
 const syncRoomOccupancy = async (roomId) => {
   await syncRoomsOccupancyBatch([roomId]);
+};
+
+const buildContinuedGuestState = ({
+  guest,
+  additionalDays,
+  now = new Date(),
+  hotelSettings = {},
+}) => {
+  const extraDays = Math.max(Number(additionalDays || 1), 1);
+  const nextStayDays = Math.max(Number(guest?.stayDays || 1), 1) + extraDays;
+  const billing = buildBillingState(
+    guest.checkInAt,
+    nextStayDays,
+    now,
+    hotelSettings,
+  );
+  const servicesTotal = (guest?.services || []).reduce(
+    (sum, service) => sum + Number(service?.totalAmount || 0),
+    0,
+  );
+  const totalAmount =
+    Number(guest?.dailyRate || 0) * Number(billing.billableDays || 1) +
+    servicesTotal;
+  const debtAmount = guest?.vip
+    ? 0
+    : Math.max(totalAmount - Number(guest?.paidAmount || 0), 0);
+
+  return { ...billing, totalAmount, debtAmount };
 };
 
 const createGuest = async (req, res) => {
@@ -729,12 +787,15 @@ const getAccruedStayDays = (guest, now = new Date()) => {
   const [checkoutHour = 12, checkoutMinute = 0] = checkoutClock
     .split(":")
     .map(Number);
-  const checkoutPassed =
-    current.hour() > checkoutHour ||
-    (current.hour() === checkoutHour && current.minute() >= checkoutMinute);
+  const isBeforeCheckout = (value) =>
+    value.hour() < checkoutHour ||
+    (value.hour() === checkoutHour && value.minute() < checkoutMinute);
+  const checkInOperationalDay = checkIn.clone().startOf("day");
+  if (isBeforeCheckout(checkIn)) checkInOperationalDay.subtract(1, "day");
+  const currentOperationalDay = current.clone().startOf("day");
+  if (isBeforeCheckout(current)) currentOperationalDay.subtract(1, "day");
   const currentStayDay = Math.max(
-    current.clone().startOf("day").diff(checkIn.clone().startOf("day"), "day") +
-      (checkoutPassed ? 1 : 0),
+    currentOperationalDay.diff(checkInOperationalDay, "day") + 1,
     1,
   );
 
@@ -1015,6 +1076,34 @@ const updateGuest = async (req, res) => {
       updates.checkInAt = parsedCheckInAt;
     }
 
+    let editedCheckOutAt = null;
+    if (Object.prototype.hasOwnProperty.call(updates, "checkOutAt")) {
+      if (guest.status !== "checked_out") {
+        return response.error(
+          res,
+          "Checkout sanasini faqat mijozlar tarixida o'zgartirish mumkin",
+        );
+      }
+      editedCheckOutAt = parseDateTimeInput(updates.checkOutAt, null);
+      if (!editedCheckOutAt) {
+        return response.error(res, "Checkout sana vaqti noto'g'ri");
+      }
+      const nextCheckInAt = updates.checkInAt || guest.checkInAt;
+      if (editedCheckOutAt.getTime() < new Date(nextCheckInAt).getTime()) {
+        return response.error(
+          res,
+          "Checkout sanasi kelgan sanadan oldin bo'lishi mumkin emas",
+        );
+      }
+      if (editedCheckOutAt.getTime() > Date.now()) {
+        return response.error(
+          res,
+          "Checkout sanasi hozirgi vaqtdan keyin bo'lishi mumkin emas",
+        );
+      }
+      updates.checkOutAt = editedCheckOutAt;
+    }
+
     if (updates.room && String(updates.room) !== String(guest.room)) {
       const targetRoom = await Room.findById(updates.room).lean();
       if (!targetRoom) return response.notFound(res, "Xona topilmadi");
@@ -1084,7 +1173,33 @@ const updateGuest = async (req, res) => {
 
     Object.assign(guest, updates);
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "stayDays")) {
+    if (editedCheckOutAt) {
+      const hotelSettings = await getHotelSettings();
+      const completedStayDays = getCompletedStayDays(
+        guest.checkInAt,
+        editedCheckOutAt,
+        hotelSettings.checkoutTime || "12:00",
+      );
+      const servicesTotal = (guest.services || []).reduce(
+        (sum, service) => sum + Number(service?.totalAmount || 0),
+        0,
+      );
+      guest.stayDays = completedStayDays;
+      guest.billableDays = completedStayDays;
+      guest.checkoutDueAt = editedCheckOutAt;
+      guest.checkoutReminderAt = applyTimeToDate(
+        editedCheckOutAt,
+        hotelSettings.reminderTime || "12:00",
+      );
+      guest.totalAmount =
+        Number(guest.dailyRate || 0) * completedStayDays + servicesTotal;
+      recalcAmounts(guest);
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(req.body, "stayDays") &&
+      !editedCheckOutAt
+    ) {
       guest.stayDays = Math.max(Number(req.body.stayDays || 1), 1);
     }
 
@@ -1124,9 +1239,14 @@ const updateGuest = async (req, res) => {
       Object.prototype.hasOwnProperty.call(req.body, "dailyRate") &&
       guest.status !== "active"
     ) {
+      const servicesTotal = (guest.services || []).reduce(
+        (sum, service) => sum + Number(service?.totalAmount || 0),
+        0,
+      );
       guest.totalAmount =
         Number(req.body.dailyRate || 0) *
-        Math.max(Number(guest.billableDays || 1), 1);
+          Math.max(Number(guest.billableDays || 1), 1) +
+        servicesTotal;
       recalcAmounts(guest);
       await guest.save();
     }
@@ -1478,6 +1598,98 @@ const checkoutGuest = async (req, res) => {
   }
 };
 
+const continueGuestStay = async (req, res) => {
+  try {
+    const guest = await Guest.findById(req.params.id);
+    if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    if (guest.status !== "checked_out") {
+      return response.error(
+        res,
+        "Faqat checkout qilingan mijoz jarayonini davom ettirish mumkin",
+      );
+    }
+
+    const additionalDays = Math.max(Number(req.body.additionalDays || 1), 1);
+    const room = await Room.findById(guest.room).lean();
+    if (!room) return response.notFound(res, "Xona topilmadi");
+    if (room.status === "remont") {
+      return response.error(
+        res,
+        "Xona remont holatida. Jarayonni davom ettirib bo'lmaydi",
+      );
+    }
+
+    const [activeCount, wholeRoomBlocked] = await Promise.all([
+      Guest.countDocuments({
+        room: room._id,
+        status: "active",
+        _id: { $ne: guest._id },
+      }),
+      Guest.exists({
+        room: room._id,
+        status: "active",
+        blocksWholeRoom: true,
+        _id: { $ne: guest._id },
+      }),
+    ]);
+    if (
+      wholeRoomBlocked ||
+      activeCount >= Number(room.capacity || 0) ||
+      (guest.blocksWholeRoom && activeCount > 0)
+    ) {
+      return response.error(
+        res,
+        "Xonada bo'sh joy yo'q. Jarayonni davom ettirib bo'lmaydi",
+      );
+    }
+
+    const now = new Date();
+    const hotelSettings = await getHotelSettings();
+    const continued = buildContinuedGuestState({
+      guest,
+      additionalDays,
+      now,
+      hotelSettings,
+    });
+    if (continued.checkoutDueAt.getTime() <= now.getTime()) {
+      return response.error(
+        res,
+        "Qo'shimcha kun yetarli emas. Checkout sanasi kelajakda bo'lishi kerak",
+      );
+    }
+
+    guest.status = "active";
+    guest.stayDays = continued.stayDays;
+    guest.billableDays = continued.billableDays;
+    guest.checkoutDueAt = continued.checkoutDueAt;
+    guest.checkoutReminderAt = continued.checkoutReminderAt;
+    guest.totalAmount = continued.totalAmount;
+    guest.debtAmount = continued.debtAmount;
+    guest.checkOutAt = null;
+    guest.checkoutBy = null;
+    guest.cancelledAt = null;
+    await guest.save();
+
+    await syncRoomOccupancy(guest.room);
+    emitGuestChanged(req.app.get("socket"), {
+      guestId: String(guest._id),
+      roomId: String(guest.room || ""),
+      status: guest.status,
+      checkoutDueAt: guest.checkoutDueAt,
+      reason: "guest_stay_continued",
+    });
+
+    const populated = await Guest.findById(guest._id).populate("room").lean();
+    return response.success(
+      res,
+      "Mijozning yashash jarayoni davom ettirildi",
+      attachGuestRuntimeFlags(populated),
+    );
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const checkoutGuestsBulk = async (req, res) => {
   try {
     const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
@@ -1573,6 +1785,8 @@ module.exports = {
   getAccruedStayDays,
   getAccruedGuestAmounts,
   getGuestPayableAmount,
+  getCompletedStayDays,
+  buildContinuedGuestState,
   createGuest,
   createGuestsBulk,
   getGuests,
@@ -1587,6 +1801,7 @@ module.exports = {
   updateGuestPayment,
   addGuestService,
   checkoutGuest,
+  continueGuestStay,
   checkoutGuestsBulk,
   deleteGuest,
 };
