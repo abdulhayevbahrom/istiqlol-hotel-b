@@ -267,11 +267,11 @@ const runReminderJob = async (io, targetDate) => {
   });
 };
 
-const runAutomaticCheckoutJob = async (io) => {
-  const now = new Date();
+const runAutomaticCheckoutJob = async (io, cutoffAt = new Date()) => {
+  const cutoff = new Date(cutoffAt);
   const guests = await Guest.find({
     status: "active",
-    checkoutDueAt: { $lte: now },
+    checkoutDueAt: { $lte: cutoff },
   })
     .select("_id room checkoutDueAt")
     .lean();
@@ -287,7 +287,7 @@ const runAutomaticCheckoutJob = async (io) => {
         update: {
           $set: {
             status: "checked_out",
-            checkOutAt: guest.checkoutDueAt || now,
+            checkOutAt: guest.checkoutDueAt || cutoff,
             checkoutBy: {
               userId: "system",
               role: "system",
@@ -313,6 +313,30 @@ const runAutomaticCheckoutJob = async (io) => {
   });
 };
 
+const getAutomaticCheckoutWindow = (
+  now = new Date(),
+  checkoutTime = "12:00",
+) => {
+  const nowTz = moment(now).tz(APP_TIMEZONE);
+  const checkout = parseTime(checkoutTime);
+  const nextMinute = nowTz.clone().add(1, "minute").startOf("minute");
+  const isEarlyMinute =
+    nextMinute.hour() === checkout.hour &&
+    nextMinute.minute() === checkout.minute;
+  const isExactMinute =
+    nowTz.hour() === checkout.hour && nowTz.minute() === checkout.minute;
+  const cutoff = isEarlyMinute
+    ? nextMinute
+    : nowTz.clone();
+
+  return {
+    isEarlyMinute,
+    isExactMinute,
+    cutoffAt: cutoff.toDate(),
+    key: `${cutoff.format("YYYY-MM-DD")}-${checkoutTime}`,
+  };
+};
+
 // Har daqiqada tekshiradi va sozlamadagi vaqtlar bo'yicha vazifalarni bir martadan ishga tushiradi
 const startGuestBillingCron = (io) => {
   const state = {
@@ -333,6 +357,10 @@ const startGuestBillingCron = (io) => {
       const hotelSettings = await getHotelSettings();
       const reminder = parseTime(hotelSettings.reminderTime);
       const checkout = parseTime(hotelSettings.checkoutTime);
+      const automaticCheckout = getAutomaticCheckoutWindow(
+        nowTz.toDate(),
+        hotelSettings.checkoutTime,
+      );
 
       if (hour === reminder.hour && minute === reminder.minute) {
         const reminderKey = `${dayKey}-${hotelSettings.reminderTime}`;
@@ -351,8 +379,37 @@ const startGuestBillingCron = (io) => {
         }
       }
 
+      // Belgilangan checkout vaqtidan bir daqiqa oldin avtomatik checkout
+      // qilamiz. checkOutAt baribir rejalashtirilgan checkoutDueAt bo'lib qoladi.
+      if (
+        automaticCheckout.isEarlyMinute &&
+        state.checkoutKey !== automaticCheckout.key &&
+        !state.checkoutRunning
+      ) {
+        state.checkoutRunning = true;
+        try {
+          await runAutomaticCheckoutJob(io, automaticCheckout.cutoffAt);
+          state.checkoutKey = automaticCheckout.key;
+        } finally {
+          state.checkoutRunning = false;
+        }
+      }
+
       if (hour === checkout.hour && minute === checkout.minute) {
         const overdueKey = `${dayKey}-${hotelSettings.checkoutTime}`;
+
+        // 11:59 trigger o'tmay qolsa, 12:00 da ham avval checkout qilinadi.
+        // Shundan keyingina overdue hisoblash ishlaydi va ortiqcha kun yozilmaydi.
+        if (state.checkoutKey !== overdueKey && !state.checkoutRunning) {
+          state.checkoutRunning = true;
+          try {
+            await runAutomaticCheckoutJob(io, nowTz.toDate());
+            state.checkoutKey = overdueKey;
+          } finally {
+            state.checkoutRunning = false;
+          }
+        }
+
         if (state.overdueKey !== overdueKey && !state.overdueRunning) {
           state.overdueRunning = true;
           state.overdueKey = overdueKey;
@@ -363,15 +420,6 @@ const startGuestBillingCron = (io) => {
           }
         }
 
-        if (state.checkoutKey !== overdueKey && !state.checkoutRunning) {
-          state.checkoutRunning = true;
-          state.checkoutKey = overdueKey;
-          try {
-            await runAutomaticCheckoutJob(io);
-          } finally {
-            state.checkoutRunning = false;
-          }
-        }
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -379,15 +427,24 @@ const startGuestBillingCron = (io) => {
     }
   };
 
-  // Server yoqilganda bir martalik tekshiruv
-  runActivateDueBookingsJob(io).catch(() => {});
-  runOverdueBillingJob(io).catch(() => {});
-  runAutomaticCheckoutJob(io).catch(() => {});
+  // Server yoqilganda ham checkout overdue hisobidan oldin ishlashi shart.
+  // Aks holda server 12:00 dan bir necha soniya keyin ishga tushsa,
+  // chiqayotgan mijozga ortiqcha kun yozilishi mumkin.
+  const runStartupJobs = async () => {
+    await runActivateDueBookingsJob(io);
+    await runAutomaticCheckoutJob(io);
+    await runOverdueBillingJob(io);
+  };
+  runStartupJobs().catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error("Guest billing startup error:", error.message);
+  });
   // Har 30 sekundda vaqt triggerini tekshiradi
   const interval = setInterval(tick, 30 * 1000);
   return interval;
 };
 
 module.exports = {
+  getAutomaticCheckoutWindow,
   startGuestBillingCron,
 };

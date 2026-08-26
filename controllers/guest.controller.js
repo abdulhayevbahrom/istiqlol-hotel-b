@@ -758,6 +758,14 @@ const getAccruedGuestAmounts = (guest, now = new Date()) => {
   return { accruedStayDays, totalAmount, debtAmount };
 };
 
+const getGuestPayableAmount = (guest) =>
+  guest?.vip
+    ? 0
+    : Math.max(
+        Number(guest?.totalAmount || 0) - Number(guest?.paidAmount || 0),
+        0,
+      );
+
 const attachGuestRuntimeFlags = (guest, nowValue = new Date()) => {
   const now = new Date(nowValue).getTime();
   const checkoutReminderAt = new Date(guest.checkoutReminderAt || 0).getTime();
@@ -769,6 +777,9 @@ const attachGuestRuntimeFlags = (guest, nowValue = new Date()) => {
   return {
     ...guest,
     ...(accruedAmounts || {}),
+    // Jami/Qarz joriy yashagan kunlar bo'yicha ko'rsatiladi, ammo mijoz
+    // rejalashtirilgan barcha kunlar uchun oldindan to'lov qila olishi kerak.
+    payableAmount: getGuestPayableAmount(guest),
     isCheckoutReminderTime: now >= checkoutReminderAt && now < checkoutDueAt,
     isCheckoutOverdue: checkoutDueAt > 0 && now > checkoutDueAt,
   };
@@ -1561,6 +1572,7 @@ const deleteGuest = async (req, res) => {
 module.exports = {
   getAccruedStayDays,
   getAccruedGuestAmounts,
+  getGuestPayableAmount,
   createGuest,
   createGuestsBulk,
   getGuests,

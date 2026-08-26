@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const path = require("node:path");
 const connectDB = require("./config/dbConfig"); // yoki ./utils/connect
 const cors = require("cors");
 const mongoose = require("mongoose"); // ⬅️ qo‘shamiz
@@ -26,6 +27,7 @@ const io = require("./middleware/socket.header")(server);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // CORS sozlamalari. Brauzerning Origin qiymatida yakuniy `/` bo'lmaydi,
 // shuning uchun domenlarni normallashtirib solishtiramiz.

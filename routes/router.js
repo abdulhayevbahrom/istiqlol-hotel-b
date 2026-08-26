@@ -41,6 +41,10 @@ const {
   deleteRoom,
 } = require("../controllers/room.controller");
 const {
+  uploadRoomImages,
+  parseRoomMultipartBody,
+} = require("../middleware/roomImageUpload.middleware");
+const {
   createExpense,
   getExpenses,
   updateExpense,
@@ -155,12 +159,14 @@ router.post(
   validate(addGroupPaymentSchema),
   addGroupPayment,
 );
-router.post("/room", validate(createRoomSchema), createRoom);
+router.post("/room", uploadRoomImages, parseRoomMultipartBody, validate(createRoomSchema), createRoom);
 router.get("/rooms", getRooms);
 router.get("/room/:id", validate(roomIdParamsSchema, "params"), getRoomById);
 router.put(
   "/room/:id",
   validate(roomIdParamsSchema, "params"),
+  uploadRoomImages,
+  parseRoomMultipartBody,
   validate(updateRoomSchema),
   updateRoom,
 );

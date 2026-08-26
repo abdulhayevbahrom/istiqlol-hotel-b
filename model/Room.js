@@ -48,6 +48,14 @@ const roomSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    images: {
+      type: [{ type: String, trim: true }],
+      default: [],
+      validate: {
+        validator: (images) => images.length <= 8,
+        message: "Ko'pi bilan 8 ta rasm saqlanishi mumkin",
+      },
+    },
   },
   { timestamps: true },
 );
