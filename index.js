@@ -11,6 +11,7 @@ const router = require("./routes/router");
 const authMiddleware = require("./middleware/AuthMiddleware");
 const { createServer } = require("node:http");
 const { startGuestBillingCron } = require("./jobs/guestBilling.cron");
+
 const { startBookingSync } = require("./integrations/booking/booking.service");
 
 const soket = require("./socket");
