@@ -5,19 +5,13 @@ const connectDB = require("./config/dbConfig"); // yoki ./utils/connect
 const cors = require("cors");
 const mongoose = require("mongoose"); // ⬅️ qo‘shamiz
 const applyTimezone = require("./model/mongoose-timezone"); // ⬅️ pluginni chaqiramiz
-
 const PORT = process.env.PORT || 8343;
-
 const notfound = require("./middleware/notfound.middleware");
-
 const router = require("./routes/router");
-
 const authMiddleware = require("./middleware/AuthMiddleware");
 const { createServer } = require("node:http");
 const { startGuestBillingCron } = require("./jobs/guestBilling.cron");
-const {
-  startBookingSync,
-} = require("./integrations/booking/booking.service");
+const { startBookingSync } = require("./integrations/booking/booking.service");
 
 const soket = require("./socket");
 
