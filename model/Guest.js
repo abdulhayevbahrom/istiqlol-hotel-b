@@ -86,6 +86,10 @@ const guestSchema = new mongoose.Schema(
 
     // Narx va qarzdorlik
     dailyRate: { type: Number, required: true, min: 0 },
+    dailyRates: {
+      type: [{ day: { type: Number, required: true, min: 1 }, amount: { type: Number, required: true, min: 0 }, _id: false }],
+      default: [],
+    },
     mainPaymentType: {
       type: String,
       enum: ["naqd", "bank"],

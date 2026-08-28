@@ -15,6 +15,10 @@ const {
 const {
   syncRoomsOccupancyByIds,
 } = require("../utils/roomOccupancy");
+const {
+  normalizeDailyRates,
+  getLodgingTotal,
+} = require("../utils/guestDailyRates");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -207,8 +211,11 @@ const syncGuestBilling = async (
     now,
     settings,
   );
-  const nextTotalAmount =
-    Number(guest.dailyRate || 0) * Number(billing.billableDays || 1);
+  const servicesTotal = (guest.services || []).reduce(
+    (sum, service) => sum + Number(service?.totalAmount || 0),
+    0,
+  );
+  const nextTotalAmount = getLodgingTotal(guest, billing.billableDays) + servicesTotal;
 
   const changed =
     Number(guest.billableDays || 0) !== Number(billing.billableDays) ||
@@ -217,7 +224,8 @@ const syncGuestBilling = async (
     new Date(guest.checkoutDueAt || 0).getTime() !==
       billing.checkoutDueAt.getTime() ||
     new Date(guest.checkoutReminderAt || 0).getTime() !==
-      billing.checkoutReminderAt.getTime();
+      billing.checkoutReminderAt.getTime() ||
+    (guest.dailyRates || []).length !== Number(billing.stayDays || 1);
 
   if (!changed) return false;
 
@@ -225,6 +233,11 @@ const syncGuestBilling = async (
   guest.billableDays = billing.billableDays;
   guest.checkoutDueAt = billing.checkoutDueAt;
   guest.checkoutReminderAt = billing.checkoutReminderAt;
+  guest.dailyRates = normalizeDailyRates(
+    guest.dailyRates,
+    billing.stayDays,
+    guest.dailyRate,
+  );
   guest.totalAmount = nextTotalAmount;
   recalcAmounts(guest);
   await guest.save();
@@ -267,7 +280,7 @@ const buildContinuedGuestState = ({
     0,
   );
   const totalAmount =
-    Number(guest?.dailyRate || 0) * Number(billing.billableDays || 1) +
+    getLodgingTotal(guest, billing.billableDays) +
     servicesTotal;
   const debtAmount = guest?.vip
     ? 0
@@ -413,6 +426,7 @@ const createGuest = async (req, res) => {
       checkoutDueAt: billing.checkoutDueAt,
       bookedForAt,
       dailyRate: guestDailyRate,
+      dailyRates: normalizeDailyRates([], billing.stayDays, guestDailyRate),
       mainPaymentType: String(mainPaymentType || "naqd"),
       totalAmount: guestDailyRate * billing.billableDays,
       paidAmount: isReservation ? 0 : initialPayment,
@@ -636,6 +650,7 @@ const createGuestsBulk = async (req, res) => {
         checkoutDueAt: billing.checkoutDueAt,
         bookedForAt,
         dailyRate: guestDailyRate,
+        dailyRates: normalizeDailyRates([], billing.stayDays, guestDailyRate),
         mainPaymentType: String(mainPaymentType || "naqd"),
         totalAmount: guestDailyRate * billing.billableDays,
         paidAmount: isReservation ? 0 : paymentPerGuest,
@@ -810,7 +825,7 @@ const getAccruedGuestAmounts = (guest, now = new Date()) => {
   );
   const lodgingTotal = guest?.vip
     ? 0
-    : Number(guest?.dailyRate || 0) * accruedStayDays;
+    : getLodgingTotal(guest, accruedStayDays);
   const totalAmount = lodgingTotal + servicesTotal;
   const debtAmount = guest?.vip
     ? 0
@@ -1192,7 +1207,7 @@ const updateGuest = async (req, res) => {
         hotelSettings.reminderTime || "12:00",
       );
       guest.totalAmount =
-        Number(guest.dailyRate || 0) * completedStayDays + servicesTotal;
+        getLodgingTotal(guest, completedStayDays) + servicesTotal;
       recalcAmounts(guest);
     }
 
@@ -1201,6 +1216,20 @@ const updateGuest = async (req, res) => {
       !editedCheckOutAt
     ) {
       guest.stayDays = Math.max(Number(req.body.stayDays || 1), 1);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
+      guest.dailyRates = normalizeDailyRates(
+        req.body.dailyRates,
+        guest.stayDays,
+        guest.dailyRate,
+      );
+    } else {
+      guest.dailyRates = normalizeDailyRates(
+        guest.dailyRates,
+        guest.stayDays,
+        guest.dailyRate,
+      );
     }
 
     if (wantsVipRequest && !guest.vip && guest.vipRequestStatus !== "pending") {
@@ -1236,7 +1265,8 @@ const updateGuest = async (req, res) => {
     }
 
     if (
-      Object.prototype.hasOwnProperty.call(req.body, "dailyRate") &&
+      (Object.prototype.hasOwnProperty.call(req.body, "dailyRate") ||
+        Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) &&
       guest.status !== "active"
     ) {
       const servicesTotal = (guest.services || []).reduce(
@@ -1244,8 +1274,7 @@ const updateGuest = async (req, res) => {
         0,
       );
       guest.totalAmount =
-        Number(req.body.dailyRate || 0) *
-          Math.max(Number(guest.billableDays || 1), 1) +
+        getLodgingTotal(guest, Math.max(Number(guest.billableDays || 1), 1)) +
         servicesTotal;
       recalcAmounts(guest);
       await guest.save();
@@ -1253,7 +1282,8 @@ const updateGuest = async (req, res) => {
 
     if (
       guest.status !== "active" &&
-      !Object.prototype.hasOwnProperty.call(req.body, "dailyRate")
+      !Object.prototype.hasOwnProperty.call(req.body, "dailyRate") &&
+      !Object.prototype.hasOwnProperty.call(req.body, "dailyRates")
     ) {
       await guest.save();
     }

@@ -36,6 +36,18 @@ const createGuestsBulkSchema = {
   properties: {
     room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     dailyRate: { type: "number", minimum: 0 },
+    dailyRates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["day", "amount"],
+        properties: {
+          day: { type: "number", minimum: 1, multipleOf: 1 },
+          amount: { type: "number", minimum: 0, multipleOf: 1 },
+        },
+      },
+    },
     stayDays: { type: "number", minimum: 1 },
     guestType: { type: "string", enum: ["uzb", "chetellik"], default: "uzb" },
     isBooking: { type: "boolean", default: false },

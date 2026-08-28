@@ -48,6 +48,26 @@ test("payments reduce accrued debt and services remain included", () => {
   });
 });
 
+test("individual stay-day prices are included in the accrued total", () => {
+  const result = getAccruedGuestAmounts(
+    {
+      ...guest,
+      stayDays: 3,
+      checkoutDueAt: "2026-08-20T12:00:00+05:00",
+      dailyRates: [
+        { day: 1, amount: 200000 },
+        { day: 2, amount: 200000 },
+        { day: 3, amount: 340000 },
+      ],
+    },
+    new Date("2026-08-19T13:00:00+05:00"),
+  );
+
+  assert.equal(result.accruedStayDays, 3);
+  assert.equal(result.totalAmount, 740000);
+  assert.equal(result.debtAmount, 740000);
+});
+
 test("accrued days do not exceed the planned stay before checkout", () => {
   const now = new Date("2026-08-29T12:00:00+05:00");
 

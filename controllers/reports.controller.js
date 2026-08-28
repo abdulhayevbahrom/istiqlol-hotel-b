@@ -7,6 +7,7 @@ const Service = require("../model/Service");
 const VipRequest = require("../model/VipRequest");
 const HallBooking = require("../model/HallBooking");
 const response = require("../utils/response");
+const { getDailyRateForDay, getLodgingTotal } = require("../utils/guestDailyRates");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -89,10 +90,18 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, 
     { beforeDay: 0, cash: 0, card: 0, transfer: 0 },
   );
 
-  const opening = splitBalance(payments.beforeDay - dailyRate * previousBillableDays);
+  const billableGuest = { ...guest, dailyRate };
+  const currentDayRate = getDailyRateForDay(
+    billableGuest,
+    previousBillableDays + 1,
+  );
+  const previousLodgingAmount = previousBillableDays
+    ? getLodgingTotal(billableGuest, previousBillableDays)
+    : 0;
+  const opening = splitBalance(payments.beforeDay - previousLodgingAmount);
   const todayPayments = payments.cash + payments.card + payments.transfer;
   const closing = splitBalance(
-    opening.prepayment - opening.debt + todayPayments - dailyRate,
+    opening.prepayment - opening.debt + todayPayments - currentDayRate,
   );
 
   return { opening, closing, payments };
@@ -536,7 +545,7 @@ const getDailyReport = async (req, res) => {
         Guest.find(getDailyActiveGuestFilter({ dayStart, nextDayStart }))
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
           .select(
-            "firstname lastname organization room stayDays billableDays dailyRate totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
+            "firstname lastname organization room stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
           )
           .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
@@ -559,7 +568,14 @@ const getDailyReport = async (req, res) => {
       const roomDoc = guest.room || {};
       const fullName = `${guest.firstname || ""} ${guest.lastname || ""}`.trim();
       const baseDailyRate = Number(guest.dailyRate || roomDoc.prices?.oddiy || 0);
-      const dailyRate = guest.vip ? 0 : baseDailyRate;
+      const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
+      const dayNumber = Math.max(
+        1,
+        day.clone().startOf("day").diff(checkInOperationalDay, "day") + 1,
+      );
+      const dailyRate = guest.vip
+        ? 0
+        : getDailyRateForDay({ ...guest, dailyRate: baseDailyRate }, dayNumber);
       const balance = calculateDailyGuestBalance({
         guest,
         reportDay: day,
