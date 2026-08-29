@@ -17,6 +17,8 @@ const {
 } = require("../utils/roomOccupancy");
 const {
   normalizeDailyRates,
+  compactDailyRates,
+  getDailyRateForDay,
   getLodgingTotal,
 } = require("../utils/guestDailyRates");
 
@@ -211,11 +213,40 @@ const syncGuestBilling = async (
     now,
     settings,
   );
+  let normalizedDailyRates = normalizeDailyRates(
+    guest.dailyRates,
+    billing.stayDays,
+    guest.dailyRate,
+  );
+  const uniqueDailyAmounts = new Set(
+    normalizedDailyRates.map((item) => Number(item.amount || 0)),
+  );
+  // An old generated schedule may retain the former uniform rate after the
+  // standard daily rate was changed. Bring it back in sync automatically.
+  if (
+    uniqueDailyAmounts.size === 1 &&
+    Number(normalizedDailyRates[0]?.amount || 0) !== Number(guest.dailyRate || 0)
+  ) {
+    normalizedDailyRates = normalizeDailyRates(
+      [],
+      billing.stayDays,
+      guest.dailyRate,
+    );
+  }
+  const persistedDailyRates = compactDailyRates(
+    normalizedDailyRates,
+    billing.stayDays,
+    guest.dailyRate,
+  );
   const servicesTotal = (guest.services || []).reduce(
     (sum, service) => sum + Number(service?.totalAmount || 0),
     0,
   );
-  const nextTotalAmount = getLodgingTotal(guest, billing.billableDays) + servicesTotal;
+  const nextTotalAmount =
+    getLodgingTotal(
+      { ...guest.toObject(), dailyRates: normalizedDailyRates },
+      billing.billableDays,
+    ) + servicesTotal;
 
   const changed =
     Number(guest.billableDays || 0) !== Number(billing.billableDays) ||
@@ -225,7 +256,7 @@ const syncGuestBilling = async (
       billing.checkoutDueAt.getTime() ||
     new Date(guest.checkoutReminderAt || 0).getTime() !==
       billing.checkoutReminderAt.getTime() ||
-    (guest.dailyRates || []).length !== Number(billing.stayDays || 1);
+    JSON.stringify(guest.dailyRates || []) !== JSON.stringify(persistedDailyRates);
 
   if (!changed) return false;
 
@@ -233,11 +264,7 @@ const syncGuestBilling = async (
   guest.billableDays = billing.billableDays;
   guest.checkoutDueAt = billing.checkoutDueAt;
   guest.checkoutReminderAt = billing.checkoutReminderAt;
-  guest.dailyRates = normalizeDailyRates(
-    guest.dailyRates,
-    billing.stayDays,
-    guest.dailyRate,
-  );
+  guest.dailyRates = persistedDailyRates;
   guest.totalAmount = nextTotalAmount;
   recalcAmounts(guest);
   await guest.save();
@@ -426,7 +453,7 @@ const createGuest = async (req, res) => {
       checkoutDueAt: billing.checkoutDueAt,
       bookedForAt,
       dailyRate: guestDailyRate,
-      dailyRates: normalizeDailyRates([], billing.stayDays, guestDailyRate),
+      dailyRates: [],
       mainPaymentType: String(mainPaymentType || "naqd"),
       totalAmount: guestDailyRate * billing.billableDays,
       paidAmount: isReservation ? 0 : initialPayment,
@@ -650,7 +677,7 @@ const createGuestsBulk = async (req, res) => {
         checkoutDueAt: billing.checkoutDueAt,
         bookedForAt,
         dailyRate: guestDailyRate,
-        dailyRates: normalizeDailyRates([], billing.stayDays, guestDailyRate),
+        dailyRates: [],
         mainPaymentType: String(mainPaymentType || "naqd"),
         totalAmount: guestDailyRate * billing.billableDays,
         paidAmount: isReservation ? 0 : paymentPerGuest,
@@ -853,6 +880,10 @@ const attachGuestRuntimeFlags = (guest, nowValue = new Date()) => {
   return {
     ...guest,
     ...(accruedAmounts || {}),
+    currentDailyRate:
+      guest?.status === "active"
+        ? getDailyRateForDay(guest, getAccruedStayDays(guest, new Date(now)))
+        : Number(guest?.dailyRate || 0),
     // Jami/Qarz joriy yashagan kunlar bo'yicha ko'rsatiladi, ammo mijoz
     // rejalashtirilgan barcha kunlar uchun oldindan to'lov qila olishi kerak.
     payableAmount: getGuestPayableAmount(guest),
@@ -864,6 +895,7 @@ const attachGuestRuntimeFlags = (guest, nowValue = new Date()) => {
 const getGuests = async (req, res) => {
   try {
     const tab = String(req.query.tab || "active").toLowerCase();
+    if (tab === "active") await syncAllActiveGuestsBilling();
     const page = Math.max(Number(req.query.page || 1), 1);
     const limit = Math.min(Math.max(Number(req.query.limit || 25), 1), 100);
     const { filter } = await buildGuestsFilter({
@@ -1049,6 +1081,9 @@ const updateGuest = async (req, res) => {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
     const previousRoomId = String(guest.room);
+    const dailyRateChanged =
+      Object.prototype.hasOwnProperty.call(req.body, "dailyRate") &&
+      Number(req.body.dailyRate || 0) !== Number(guest.dailyRate || 0);
 
     if (Object.prototype.hasOwnProperty.call(req.body, "vipRequestStatus")) {
       return response.error(
@@ -1218,14 +1253,19 @@ const updateGuest = async (req, res) => {
       guest.stayDays = Math.max(Number(req.body.stayDays || 1), 1);
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
-      guest.dailyRates = normalizeDailyRates(
+    // The standard rate is an "apply to all days" action. Per-day overrides
+    // can then be entered in a subsequent edit without being silently mixed
+    // with values left over from the former standard rate.
+    if (dailyRateChanged) {
+      guest.dailyRates = [];
+    } else if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
+      guest.dailyRates = compactDailyRates(
         req.body.dailyRates,
         guest.stayDays,
         guest.dailyRate,
       );
     } else {
-      guest.dailyRates = normalizeDailyRates(
+      guest.dailyRates = compactDailyRates(
         guest.dailyRates,
         guest.stayDays,
         guest.dailyRate,

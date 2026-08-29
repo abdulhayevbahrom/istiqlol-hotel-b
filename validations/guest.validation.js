@@ -96,6 +96,18 @@ const updateGuestSchema = {
     isBlacklisted: { type: "boolean" },
     vip: { type: "boolean" },
     dailyRate: { type: "number", minimum: 0 },
+    dailyRates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["day", "amount"],
+        properties: {
+          day: { type: "number", minimum: 1, multipleOf: 1 },
+          amount: { type: "number", minimum: 0, multipleOf: 1 },
+        },
+      },
+    },
     stayDays: { type: "number", minimum: 1 },
     totalAmount: { type: "number", minimum: 0 },
     bookedForAt: { type: "string", minLength: 1 },
