@@ -35,8 +35,24 @@ const expenseIdParamsSchema = {
   },
 };
 
+const deleteExpensesBulkSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ids"],
+  properties: {
+    ids: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      uniqueItems: true,
+      items: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
+    },
+  },
+};
+
 module.exports = {
   createExpenseSchema,
   updateExpenseSchema,
   expenseIdParamsSchema,
+  deleteExpensesBulkSchema,
 };

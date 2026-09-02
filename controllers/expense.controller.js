@@ -165,9 +165,21 @@ const deleteExpense = async (req, res) => {
   }
 };
 
+const deleteExpensesBulk = async (req, res) => {
+  try {
+    const result = await Expense.deleteMany({ _id: { $in: req.body.ids } });
+    return response.success(res, `${result.deletedCount || 0} ta xarajat o'chirildi`, {
+      deletedCount: result.deletedCount || 0,
+    });
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 module.exports = {
   createExpense,
   getExpenses,
   updateExpense,
   deleteExpense,
+  deleteExpensesBulk,
 };

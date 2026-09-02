@@ -16,6 +16,7 @@ const {
   createExpenseSchema,
   updateExpenseSchema,
   expenseIdParamsSchema,
+  deleteExpensesBulkSchema,
 } = require("../validations/expense.validation");
 const { updateSettingsSchema } = require("../validations/setting.validation");
 const {
@@ -49,6 +50,7 @@ const {
   getExpenses,
   updateExpense,
   deleteExpense,
+  deleteExpensesBulk,
 } = require("../controllers/expense.controller");
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
 const { getDailyReport, getReportsSummary } = require("../controllers/reports.controller");
@@ -178,6 +180,11 @@ router.get("/dashboard", getDashboardSummary);
 router.get("/reports-summary", getReportsSummary);
 router.get("/reports-daily", getDailyReport);
 router.get("/expenses", getExpenses);
+router.delete(
+  "/expenses/bulk",
+  validate(deleteExpensesBulkSchema),
+  deleteExpensesBulk,
+);
 router.put(
   "/expense/:id",
   validate(expenseIdParamsSchema, "params"),
