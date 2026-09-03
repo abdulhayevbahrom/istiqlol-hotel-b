@@ -12,11 +12,10 @@ const dayStart = reportDay.clone().hour(12).toDate();
 const nextDayStart = reportDay.clone().add(1, "day").hour(12).toDate();
 
 const calculate = (checkInAt, payments = []) => calculateDailyGuestBalance({
-  guest: { checkInAt, payments },
+  guest: { checkInAt, payments, dailyRate: 300000 },
   reportDay,
   dayStart,
   nextDayStart,
-  dailyRate: 300000,
 });
 
 test("new guest starts with zero and carries today's unpaid rate as debt", () => {
@@ -74,4 +73,28 @@ test("checkout exactly at operational day start belongs to the previous day", ()
       { status: "checked_out", checkOutAt: { $gt: dayStart } },
     ],
   });
+});
+
+test("daily balance preserves previous per-day rates when current day is higher", () => {
+  const result = calculateDailyGuestBalance({
+    guest: {
+      checkInAt: "2026-08-19T13:00:00+05:00",
+      dailyRate: 1950000,
+      dailyRates: [
+        { day: 1, amount: 360000 },
+        { day: 2, amount: 360000 },
+        { day: 3, amount: 360000 },
+        { day: 4, amount: 360000 },
+        { day: 5, amount: 360000 },
+        { day: 6, amount: 1950000 },
+      ],
+      payments: [],
+    },
+    reportDay,
+    dayStart,
+    nextDayStart,
+  });
+
+  assert.deepEqual(result.opening, { prepayment: 0, debt: 1800000 });
+  assert.deepEqual(result.closing, { prepayment: 0, debt: 3750000 });
 });

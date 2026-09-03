@@ -14,11 +14,10 @@ const normalizeDailyRates = (dailyRates = [], stayDays = 1, fallbackRate = 0) =>
   }));
 };
 
-// Persist only prices that differ from the standard rate. This keeps a later
-// standard-rate change effective for every non-overridden day.
+// Persist explicit per-day prices as history. If a later day gets a different
+// rate, previous days must keep their own amounts instead of inheriting it.
 const compactDailyRates = (dailyRates = [], stayDays = 1, fallbackRate = 0) => {
   const expectedDays = Math.max(Number(stayDays || 1), 1);
-  const fallback = Math.max(Number(fallbackRate || 0), 0);
   const values = new Map(
     (Array.isArray(dailyRates) ? dailyRates : [])
       .filter((item) => Number(item?.day) >= 1 && Number(item.day) <= expectedDays)
@@ -26,7 +25,6 @@ const compactDailyRates = (dailyRates = [], stayDays = 1, fallbackRate = 0) => {
   );
 
   return [...values.entries()]
-    .filter(([, amount]) => amount !== fallback)
     .sort(([firstDay], [secondDay]) => firstDay - secondDay)
     .map(([day, amount]) => ({ day, amount }));
 };

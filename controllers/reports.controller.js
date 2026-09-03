@@ -64,7 +64,7 @@ const getOperationalDay = (date) => {
   return localDate.startOf("day");
 };
 
-const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, dailyRate }) => {
+const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart }) => {
   const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
   const previousBillableDays = Math.max(
     0,
@@ -90,13 +90,12 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, 
     { beforeDay: 0, cash: 0, card: 0, transfer: 0 },
   );
 
-  const billableGuest = { ...guest, dailyRate };
   const currentDayRate = getDailyRateForDay(
-    billableGuest,
+    guest,
     previousBillableDays + 1,
   );
   const previousLodgingAmount = previousBillableDays
-    ? getLodgingTotal(billableGuest, previousBillableDays)
+    ? getLodgingTotal(guest, previousBillableDays)
     : 0;
   const opening = splitBalance(payments.beforeDay - previousLodgingAmount);
   const todayPayments = payments.cash + payments.card + payments.transfer;
@@ -581,7 +580,6 @@ const getDailyReport = async (req, res) => {
         reportDay: day,
         dayStart,
         nextDayStart,
-        dailyRate,
       });
       return {
         roomId: roomDoc._id,

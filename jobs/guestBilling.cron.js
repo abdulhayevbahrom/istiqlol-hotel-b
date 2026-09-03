@@ -11,6 +11,7 @@ const {
 const {
   syncRoomsOccupancyByIds,
 } = require("../utils/roomOccupancy");
+const { getLodgingTotal } = require("../utils/guestDailyRates");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -67,7 +68,7 @@ const runActivateDueBookingsJob = async (io) => {
     status: "booked",
     bookedForAt: { $lte: now },
   })
-    .select("_id room stayDays dailyRate paidAmount vip bookedForAt")
+    .select("_id room stayDays dailyRate dailyRates paidAmount vip bookedForAt")
     .sort({ bookedForAt: 1, createdAt: 1 })
     .lean();
 
@@ -131,8 +132,7 @@ const runActivateDueBookingsJob = async (io) => {
       now,
       hotelSettings,
     );
-    const nextTotalAmount =
-      Number(guest.dailyRate || 0) * Number(billing.billableDays || 1);
+    const nextTotalAmount = getLodgingTotal(guest, billing.billableDays);
     const nextDebtAmount = guest.vip
       ? 0
       : Math.max(nextTotalAmount - Number(guest.paidAmount || 0), 0);
@@ -181,7 +181,7 @@ const runOverdueBillingJob = async (io) => {
     ],
   })
     .select(
-      "_id checkInAt stayDays billableDays dailyRate totalAmount paidAmount debtAmount vip checkoutDueAt checkoutReminderAt",
+      "_id checkInAt stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount vip checkoutDueAt checkoutReminderAt",
     )
     .lean();
 
@@ -195,8 +195,7 @@ const runOverdueBillingJob = async (io) => {
       now,
       hotelSettings,
     );
-    const nextTotalAmount =
-      Number(guest.dailyRate || 0) * Number(billing.billableDays || 1);
+    const nextTotalAmount = getLodgingTotal(guest, billing.billableDays);
 
     const changed =
       Number(guest.billableDays || 0) !== Number(billing.billableDays) ||

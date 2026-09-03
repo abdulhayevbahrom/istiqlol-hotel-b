@@ -224,21 +224,6 @@ const syncGuestBilling = async (
     billing.stayDays,
     guest.dailyRate,
   );
-  const uniqueDailyAmounts = new Set(
-    normalizedDailyRates.map((item) => Number(item.amount || 0)),
-  );
-  // An old generated schedule may retain the former uniform rate after the
-  // standard daily rate was changed. Bring it back in sync automatically.
-  if (
-    uniqueDailyAmounts.size === 1 &&
-    Number(normalizedDailyRates[0]?.amount || 0) !== Number(guest.dailyRate || 0)
-  ) {
-    normalizedDailyRates = normalizeDailyRates(
-      [],
-      billing.stayDays,
-      guest.dailyRate,
-    );
-  }
   const persistedDailyRates = compactDailyRates(
     normalizedDailyRates,
     billing.stayDays,
@@ -1242,17 +1227,14 @@ const updateGuest = async (req, res) => {
       guest.stayDays = Math.max(Number(req.body.stayDays || 1), 1);
     }
 
-    // The standard rate is an "apply to all days" action. Per-day overrides
-    // can then be entered in a subsequent edit without being silently mixed
-    // with values left over from the former standard rate.
-    if (dailyRateChanged) {
-      guest.dailyRates = [];
-    } else if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
+    if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
       guest.dailyRates = compactDailyRates(
         req.body.dailyRates,
         guest.stayDays,
         guest.dailyRate,
       );
+    } else if (dailyRateChanged) {
+      guest.dailyRates = [];
     } else {
       guest.dailyRates = compactDailyRates(
         guest.dailyRates,

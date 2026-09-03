@@ -7,6 +7,7 @@ const {
   buildContinuedGuestState,
   getCompletedStayDays,
 } = require("../controllers/guest.controller");
+const { compactDailyRates } = require("../utils/guestDailyRates");
 
 const guest = {
   status: "active",
@@ -66,6 +67,25 @@ test("individual stay-day prices are included in the accrued total", () => {
   assert.equal(result.accruedStayDays, 3);
   assert.equal(result.totalAmount, 740000);
   assert.equal(result.debtAmount, 740000);
+});
+
+test("explicit daily rates are preserved even when they match the standard rate", () => {
+  assert.deepEqual(
+    compactDailyRates(
+      [
+        { day: 1, amount: 360000 },
+        { day: 2, amount: 360000 },
+        { day: 3, amount: 1950000 },
+      ],
+      3,
+      1950000,
+    ),
+    [
+      { day: 1, amount: 360000 },
+      { day: 2, amount: 360000 },
+      { day: 3, amount: 1950000 },
+    ],
+  );
 });
 
 test("accrued days do not exceed the planned stay before checkout", () => {
