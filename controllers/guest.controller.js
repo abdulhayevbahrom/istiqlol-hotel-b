@@ -71,6 +71,12 @@ const parseDateTimeInput = (value, fallback = null) => {
   return parsed;
 };
 
+const parseFutureReservationTime = (value) => {
+  const parsed = parseDateTimeInput(value, null);
+  if (!parsed) return null;
+  return parsed;
+};
+
 const canManageVip = (user) => {
   if (!user) return false;
   return hasFullAccess(user.role);
@@ -379,26 +385,17 @@ const createGuest = async (req, res) => {
     const normalizedStayDays = Math.max(Number(stayDays || 1), 1);
     const isReservation = Boolean(isBooking);
     const bookedForAt =
-      isReservation && bookedForDate ? new Date(bookedForDate) : null;
+      isReservation && bookedForDate
+        ? parseFutureReservationTime(bookedForDate)
+        : null;
     if (isReservation) {
       if (!bookedForAt || Number.isNaN(bookedForAt.getTime())) {
         return response.error(res, "Bron sanasi noto'g'ri");
       }
-      bookedForAt.setHours(12, 0, 0, 0);
-
-      const start = new Date(bookedForAt);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(bookedForAt);
-      end.setHours(23, 59, 59, 999);
-      const hasBooking = await Guest.exists({
-        room,
-        status: "booked",
-        bookedForAt: { $gte: start, $lte: end },
-      });
-      if (hasBooking) {
+      if (bookedForAt.getTime() < Date.now()) {
         return response.error(
           res,
-          "Bu xona shu kunga allaqachon bron qilingan",
+          "Bron vaqti hozirgi vaqtdan oldin bo'lishi mumkin emas",
         );
       }
     }
@@ -557,26 +554,18 @@ const createGuestsBulk = async (req, res) => {
     const normalizedDailyRate = Number(dailyRate || 0);
     const normalizedStayDays = Math.max(Number(stayDays || 1), 1);
     const bookedForAt =
-      isReservation && bookedForDate ? new Date(bookedForDate) : null;
+      isReservation && bookedForDate
+        ? parseFutureReservationTime(bookedForDate)
+        : null;
 
     if (isReservation) {
       if (!bookedForAt || Number.isNaN(bookedForAt.getTime())) {
         return response.error(res, "Bron sanasi noto'g'ri");
       }
-      bookedForAt.setHours(12, 0, 0, 0);
-      const start = new Date(bookedForAt);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(bookedForAt);
-      end.setHours(23, 59, 59, 999);
-      const hasBooking = await Guest.exists({
-        room,
-        status: "booked",
-        bookedForAt: { $gte: start, $lte: end },
-      });
-      if (hasBooking) {
+      if (bookedForAt.getTime() < Date.now()) {
         return response.error(
           res,
-          "Bu xona shu kunga allaqachon bron qilingan",
+          "Bron vaqti hozirgi vaqtdan oldin bo'lishi mumkin emas",
         );
       }
     } else {
