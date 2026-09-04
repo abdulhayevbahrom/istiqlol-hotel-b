@@ -19,6 +19,12 @@ const buildBookingEnd = (start, stayDays, checkoutTime) => {
   return end;
 };
 
+const parsePaymentDate = (value) => {
+  if (!value) return new Date();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 const createGroupBooking = async (req, res) => {
   let group = null;
   try {
@@ -225,6 +231,8 @@ const addGroupPayment = async (req, res) => {
     }
 
     const amount = Number(req.body.amount || 0);
+    const paymentDate = parsePaymentDate(req.body.paymentDate);
+    if (!paymentDate) return response.error(res, "To'lov sanasi noto'g'ri");
     const groupDebt = guests.reduce(
       (sum, guest) => sum + Number(guest.debtAmount || 0),
       0,
@@ -245,6 +253,7 @@ const addGroupPayment = async (req, res) => {
         amount: share,
         type: req.body.type,
         note: req.body.note || `Guruh to'lovi: ${group.name}`,
+        createdAt: paymentDate,
       });
       guest.paidAmount = Number(guest.paidAmount || 0) + share;
       guest.debtAmount = Math.max(
@@ -258,6 +267,7 @@ const addGroupPayment = async (req, res) => {
       amount,
       type: req.body.type,
       note: req.body.note || "",
+      createdAt: paymentDate,
     });
     await group.save();
 

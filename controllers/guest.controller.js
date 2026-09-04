@@ -71,6 +71,11 @@ const parseDateTimeInput = (value, fallback = null) => {
   return parsed;
 };
 
+const parsePaymentDateInput = (value) => {
+  if (!value) return new Date();
+  return parseDateTimeInput(value, null);
+};
+
 const parseFutureReservationTime = (value) => {
   const parsed = parseDateTimeInput(value, null);
   if (!parsed) return null;
@@ -329,6 +334,7 @@ const createGuest = async (req, res) => {
       note = "",
       initialPaymentAmount = 0,
       initialPaymentType = "naqd",
+      initialPaymentDate,
     } = req.body;
 
     const normalizedPassport = String(passport || "").trim();
@@ -412,6 +418,8 @@ const createGuest = async (req, res) => {
     const acceptedBy = await buildActionBy(req.admin);
     const guestDailyRate = splitDailyRate(normalizedDailyRate, 1);
     const initialPayment = Math.max(Number(initialPaymentAmount || 0), 0);
+    const initialPaymentCreatedAt = parsePaymentDateInput(initialPaymentDate);
+    if (!initialPaymentCreatedAt) return response.error(res, "To'lov sanasi noto'g'ri");
     if (initialPayment > 0 && isVipRequested) {
       return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
     }
@@ -444,7 +452,12 @@ const createGuest = async (req, res) => {
         : Math.max(guestDailyRate * billing.billableDays - initialPayment, 0),
       payments:
         !isReservation && initialPayment > 0
-          ? [{ amount: initialPayment, type: initialPaymentType, note: "Qabul qilish paytidagi to'lov" }]
+          ? [{
+              amount: initialPayment,
+              type: initialPaymentType,
+              note: "Qabul qilish paytidagi to'lov",
+              createdAt: initialPaymentCreatedAt,
+            }]
           : [],
       status: isReservation ? "booked" : "active",
       acceptedBy,
@@ -520,6 +533,7 @@ const createGuestsBulk = async (req, res) => {
       guests = [],
       initialPaymentAmount = 0,
       initialPaymentType = "naqd",
+      initialPaymentDate,
     } = req.body;
 
     if (!Array.isArray(guests) || guests.length < 1) {
@@ -624,6 +638,8 @@ const createGuestsBulk = async (req, res) => {
 
     const guestDailyRate = splitDailyRate(normalizedDailyRate, normalizedGuests.length);
     const totalInitialPayment = Math.max(Number(initialPaymentAmount || 0), 0);
+    const initialPaymentCreatedAt = parsePaymentDateInput(initialPaymentDate);
+    if (!initialPaymentCreatedAt) return response.error(res, "To'lov sanasi noto'g'ri");
     if (totalInitialPayment > 0 && normalizedGuests.some((guest) => guest.vip)) {
       return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
     }
@@ -660,7 +676,12 @@ const createGuestsBulk = async (req, res) => {
           : Math.max(guestDailyRate * billing.billableDays - paymentPerGuest, 0),
         payments:
           !isReservation && paymentPerGuest > 0
-            ? [{ amount: paymentPerGuest, type: initialPaymentType, note: "Qabul qilish paytidagi to'lov" }]
+            ? [{
+                amount: paymentPerGuest,
+                type: initialPaymentType,
+                note: "Qabul qilish paytidagi to'lov",
+                createdAt: initialPaymentCreatedAt,
+              }]
             : [],
         status: isReservation ? "booked" : "active",
         acceptedBy,
@@ -1450,7 +1471,7 @@ const decideVipRequest = async (req, res) => {
 
 const addGuestPayment = async (req, res) => {
   try {
-    const { amount, type, note = "" } = req.body;
+    const { amount, type, note = "", paymentDate } = req.body;
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
     // if (guest.status !== "active") return response.error(res, "Faqat active mehmon uchun to'lov qo'shiladi");
@@ -1459,7 +1480,14 @@ const addGuestPayment = async (req, res) => {
 
     await syncGuestBilling(guest);
 
-    guest.payments.push({ amount: Number(amount), type, note });
+    const paymentCreatedAt = parsePaymentDateInput(paymentDate);
+    if (!paymentCreatedAt) return response.error(res, "To'lov sanasi noto'g'ri");
+    guest.payments.push({
+      amount: Number(amount),
+      type,
+      note,
+      createdAt: paymentCreatedAt,
+    });
     guest.paidAmount = Number(guest.paidAmount || 0) + Number(amount);
     recalcAmounts(guest);
     await guest.save();
@@ -1513,6 +1541,11 @@ const updateGuestPayment = async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(req.body, "note")) {
       payment.note = String(req.body.note || "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, "paymentDate")) {
+      const paymentDate = parseDateTimeInput(req.body.paymentDate, null);
+      if (!paymentDate) return response.error(res, "To'lov sanasi noto'g'ri");
+      payment.createdAt = paymentDate;
     }
 
     await syncGuestBilling(guest);

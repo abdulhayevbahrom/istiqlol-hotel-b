@@ -20,6 +20,7 @@ const guestBaseProperties = {
   note: { type: "string" },
   initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
   initialPaymentType: { type: "string", enum: paymentTypes },
+  initialPaymentDate: { type: "string", minLength: 1 },
 };
 
 const createGuestSchema = {
@@ -54,6 +55,7 @@ const createGuestsBulkSchema = {
     bookedForDate: { type: "string", minLength: 1 },
     initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
     initialPaymentType: { type: "string", enum: paymentTypes },
+    initialPaymentDate: { type: "string", minLength: 1 },
     guests: {
       type: "array",
       minItems: 1,
@@ -173,6 +175,7 @@ const addPaymentSchema = {
     amount: { type: "number", minimum: 1, multipleOf: 1 },
     type: { type: "string", enum: paymentTypes },
     note: { type: "string" },
+    paymentDate: { type: "string", minLength: 1 },
   },
 };
 
@@ -184,6 +187,7 @@ const updatePaymentSchema = {
     amount: { type: "number", minimum: 0, multipleOf: 1 },
     type: { type: "string", enum: paymentTypes },
     note: { type: "string" },
+    paymentDate: { type: "string", minLength: 1 },
   },
 };
 

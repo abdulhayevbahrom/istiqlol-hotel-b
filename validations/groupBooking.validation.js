@@ -85,6 +85,7 @@ const addGroupPaymentSchema = {
     amount: { type: "number", minimum: 1, multipleOf: 1 },
     type: { type: "string", enum: ["naqd", "bank", "karta"] },
     note: { type: "string" },
+    paymentDate: { type: "string", minLength: 1 },
   },
 };
 

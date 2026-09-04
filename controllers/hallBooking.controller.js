@@ -59,6 +59,12 @@ const validateDates = (startDate, endDate) =>
   !Number.isNaN(endDate.getTime()) &&
   startDate.getTime() <= endDate.getTime();
 
+const parsePaymentDate = (value) => {
+  if (!value) return new Date();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 const hasOverlap = async ({ hallName, startDate, endDate, excludeId = null }) => {
   const filter = {
     hallName,
@@ -112,6 +118,8 @@ const createHallBooking = async (req, res) => {
     if (payload.paidAmount > payload.totalAmount) {
       return response.error(res, "Boshlang'ich to'lov jami summadan oshmasin");
     }
+    const initialPaymentDate = parsePaymentDate(req.body.initialPaymentDate);
+    if (!initialPaymentDate) return response.error(res, "To'lov sanasi noto'g'ri");
 
     if (await hasOverlap(payload)) {
       return response.error(
@@ -124,7 +132,12 @@ const createHallBooking = async (req, res) => {
       ...payload,
       payments:
         payload.paidAmount > 0
-          ? [{ amount: payload.paidAmount, type: "naqd", note: "Oldindan to'lov (zakalad)" }]
+          ? [{
+              amount: payload.paidAmount,
+              type: "naqd",
+              note: "Oldindan to'lov (zakalad)",
+              createdAt: initialPaymentDate,
+            }]
           : [],
       createdBy: await buildCreatedBy(req.admin),
     });
@@ -206,6 +219,8 @@ const addHallBookingPayment = async (req, res) => {
     if (!booking) return response.notFound(res, "Zal ijarasi topilmadi");
 
     const amount = Number(req.body.amount || 0);
+    const paymentDate = parsePaymentDate(req.body.paymentDate);
+    if (!paymentDate) return response.error(res, "To'lov sanasi noto'g'ri");
     if (amount <= 0) return response.error(res, "To'lov summasi noto'g'ri");
     if (amount > Number(booking.debtAmount || 0)) {
       return response.error(res, "To'lov qarzdan oshmasin");
@@ -215,6 +230,7 @@ const addHallBookingPayment = async (req, res) => {
       amount,
       type: String(req.body.type || "naqd"),
       note: String(req.body.note || "").trim(),
+      createdAt: paymentDate,
     });
     booking.paidAmount = Number(booking.paidAmount || 0) + amount;
     booking.debtAmount = Math.max(Number(booking.totalAmount || 0) - booking.paidAmount, 0);
