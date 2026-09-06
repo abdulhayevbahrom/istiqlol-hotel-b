@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 8343;
 const notfound = require("./middleware/notfound.middleware");
 const router = require("./routes/router");
 const authMiddleware = require("./middleware/AuthMiddleware");
+const { createPublicBooking } = require("./controllers/publicBooking.controller");
 const { createServer } = require("node:http");
 const { startGuestBillingCron } = require("./jobs/guestBilling.cron");
 
@@ -30,6 +31,7 @@ const normalizeOrigin = (value) => String(value || "").replace(/\/+$/, "");
 const allowedOrigins = [
   "https://istiqlol-hotel.vercel.app",
   "http://localhost:5173",
+  "http://127.0.0.1:5173",
   ...(process.env.CLIENT_ORIGINS || "").split(","),
 ]
   .map((origin) => normalizeOrigin(origin.trim()))
@@ -55,6 +57,7 @@ mongoose.plugin(applyTimezone);
 app.set("socket", io);
 soket.connect(io);
 
+app.post("/api/public/booking", createPublicBooking);
 app.use("/api", authMiddleware, router); // Routerlarni ulash
 app.get("/", (req, res) => res.send("Salom dunyo")); // Bosh sahifa
 app.use(notfound); // 404 middleware

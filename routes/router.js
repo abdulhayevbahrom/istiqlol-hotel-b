@@ -84,6 +84,11 @@ const {
   serviceIdParamsSchema,
 } = require("../validations/service.validation");
 const {
+  createReceiptSchema,
+  updateReceiptSchema,
+  receiptIdParamsSchema,
+} = require("../validations/receipt.validation");
+const {
   hallBookingIdParamsSchema,
   createHallBookingSchema,
   updateHallBookingSchema,
@@ -117,6 +122,12 @@ const {
   updateService,
   deleteService,
 } = require("../controllers/service.controller");
+const {
+  createReceipt,
+  getReceipts,
+  updateReceipt,
+  deleteReceipt,
+} = require("../controllers/receipt.controller");
 const {
   createHallBooking,
   getHallBookings,
@@ -200,6 +211,19 @@ router.get("/settings", getSettings);
 router.put("/settings", validate(updateSettingsSchema), updateSettings);
 router.post("/service", validate(createServiceSchema), createService);
 router.get("/services", getServices);
+router.post("/receipt", validate(createReceiptSchema), createReceipt);
+router.get("/receipts", getReceipts);
+router.put(
+  "/receipt/:id",
+  validate(receiptIdParamsSchema, "params"),
+  validate(updateReceiptSchema),
+  updateReceipt,
+);
+router.delete(
+  "/receipt/:id",
+  validate(receiptIdParamsSchema, "params"),
+  deleteReceipt,
+);
 router.put(
   "/service/:id",
   validate(serviceIdParamsSchema, "params"),
