@@ -46,6 +46,9 @@ const {
   parseRoomMultipartBody,
 } = require("../middleware/roomImageUpload.middleware");
 const {
+  requireSectionAccess,
+} = require("../middleware/sectionAccess.middleware");
+const {
   createExpense,
   getExpenses,
   updateExpense,
@@ -53,7 +56,11 @@ const {
   deleteExpensesBulk,
 } = require("../controllers/expense.controller");
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
-const { getDailyReport, getReportsSummary } = require("../controllers/reports.controller");
+const {
+  getClientSalesReport,
+  getDailyReport,
+  getReportsSummary,
+} = require("../controllers/reports.controller");
 const {
   getSettings,
   updateSettings,
@@ -150,21 +157,29 @@ router.post(
   validate(refreshTokenSchema),
   refreshEmployeeToken,
 );
-router.post("/employee", validate(createEmployeeSchema), createEmployee);
-router.get("/employees", getEmployees);
+router.post(
+  "/employee",
+  requireSectionAccess("employees"),
+  validate(createEmployeeSchema),
+  createEmployee,
+);
+router.get("/employees", requireSectionAccess("employees"), getEmployees);
 router.get(
   "/employee/:id",
+  requireSectionAccess("employees"),
   validate(employeeIdParamsSchema, "params"),
   getEmployeeById,
 );
 router.put(
   "/employee/:id",
+  requireSectionAccess("employees"),
   validate(employeeIdParamsSchema, "params"),
   validate(updateEmployeeSchema),
   updateEmployee,
 );
 router.delete(
   "/employee/:id",
+  requireSectionAccess("employees"),
   validate(employeeIdParamsSchema, "params"),
   deleteEmployee,
 );
@@ -189,6 +204,7 @@ router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
 router.get("/reports-summary", getReportsSummary);
+router.get("/reports-client-sales", getClientSalesReport);
 router.get("/reports-daily", getDailyReport);
 router.get("/expenses", getExpenses);
 router.delete(

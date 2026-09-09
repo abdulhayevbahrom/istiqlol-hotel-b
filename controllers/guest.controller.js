@@ -738,6 +738,7 @@ const buildGuestsFilter = async ({
   roomNumber,
   floor,
   category,
+  clientType,
   startDate,
   endDate,
 }) => {
@@ -754,6 +755,21 @@ const buildGuestsFilter = async ({
 
   if (vip === "true") filter.vip = true;
   if (vip === "false") filter.vip = false;
+
+  if (tab === "debtors") {
+    const normalizedClientType = String(clientType || "").toLowerCase().trim();
+    if (normalizedClientType === "group") {
+      filter.group = { $ne: null };
+    }
+    if (normalizedClientType === "organization") {
+      filter.group = null;
+      filter.organization = { $regex: "\\S", $options: "i" };
+    }
+    if (normalizedClientType === "guest") {
+      filter.group = null;
+      filter.$or = [{ organization: "" }, { organization: { $exists: false } }];
+    }
+  }
 
   if (startDate || endDate) {
     filter.checkInAt = {};
@@ -798,9 +814,15 @@ const buildGuestsFilter = async ({
       { firstname: searchRegex },
       { lastname: searchRegex },
       { passport: searchRegex },
+      { organization: searchRegex },
     ];
     if (roomIds.length) searchOr.push({ room: { $in: roomIds } });
-    filter.$or = searchOr;
+    if (filter.$or) {
+      filter.$and = [...(filter.$and || []), { $or: filter.$or }, { $or: searchOr }];
+      delete filter.$or;
+    } else {
+      filter.$or = searchOr;
+    }
   }
 
   return { filter };
@@ -901,6 +923,7 @@ const getGuests = async (req, res) => {
       roomNumber: req.query.roomNumber,
       floor: req.query.floor,
       category: req.query.category,
+      clientType: req.query.clientType,
       startDate: req.query.startDate,
       endDate: req.query.endDate,
     });
@@ -923,7 +946,18 @@ const getGuests = async (req, res) => {
     ]);
 
     const totalPages = Math.max(Math.ceil(total / limit), 1);
-    let items = itemsRaw.map((guest) => attachGuestRuntimeFlags(guest));
+    let items = itemsRaw.map((guest) => {
+      const runtimeGuest = attachGuestRuntimeFlags(guest);
+      const organization = String(runtimeGuest.organization || "").trim();
+      return {
+        ...runtimeGuest,
+        clientType: runtimeGuest.group
+          ? "group"
+          : organization
+            ? "organization"
+            : "guest",
+      };
+    });
     if (tab === "active") {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);

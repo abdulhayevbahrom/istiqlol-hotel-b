@@ -6,6 +6,9 @@ const response = require("../utils/response");
 const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
 const { getHotelSettings, applyTimeToDate } = require("../utils/hotelSettings");
 
+const escapeRegex = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const parseBookingStart = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -174,11 +177,12 @@ const getGroupBookings = async (req, res) => {
     const tab = String(req.query.tab || "active");
     const page = Math.max(Number(req.query.page || 1), 1);
     const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
+    const search = String(req.query.query || "").trim();
     const groups = await GroupBooking.find()
       .populate("rooms", "roomNumber floor korpus category capacity")
       .populate(
         "guests",
-        "firstname lastname passport birthDate phone email note status vip dailyRate totalAmount paidAmount debtAmount room checkInAt checkOutAt",
+        "firstname lastname passport birthDate phone email organization note status vip dailyRate totalAmount paidAmount debtAmount room checkInAt checkOutAt",
       )
       .sort({ bookedForAt: -1, createdAt: -1 })
       .lean();
@@ -207,9 +211,31 @@ const getGroupBookings = async (req, res) => {
         };
       })
       .filter((group) => group.status === (tab === "history" ? "history" : "active"));
-    const total = filteredItems.length;
+
+    const searchRegex = search ? new RegExp(escapeRegex(search), "i") : null;
+    const searchedItems = searchRegex
+      ? filteredItems.filter((group) => {
+          const groupMatches = [group.name, group.phone, group.email, group.note].some(
+            (value) => searchRegex.test(String(value || "")),
+          );
+          const guestMatches = (group.guests || []).some((guest) =>
+            [
+              guest.firstname,
+              guest.lastname,
+              guest.passport,
+              guest.phone,
+              guest.email,
+              guest.organization,
+              guest.note,
+            ].some((value) => searchRegex.test(String(value || ""))),
+          );
+          return groupMatches || guestMatches;
+        })
+      : filteredItems;
+
+    const total = searchedItems.length;
     const totalPages = Math.max(Math.ceil(total / limit), 1);
-    const items = filteredItems.slice((page - 1) * limit, page * limit);
+    const items = searchedItems.slice((page - 1) * limit, page * limit);
 
     return response.success(res, "Guruhlar ro'yxati", {
       items,

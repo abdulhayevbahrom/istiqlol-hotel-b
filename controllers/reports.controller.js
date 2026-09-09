@@ -13,6 +13,9 @@ const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
+const escapeRegex = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const getReportDay = (dateQuery) => {
   const value = String(dateQuery || "");
   if (!DATE_PATTERN.test(value)) return null;
@@ -26,6 +29,33 @@ const getMonthBase = (monthQuery) => {
     return moment.tz(`${monthQuery}-01`, "YYYY-MM-DD", TIMEZONE).startOf("month");
   }
   return moment.tz(TIMEZONE).startOf("month");
+};
+
+const getReportRange = ({ from, to, month }) => {
+  if (from || to) {
+    if (!DATE_PATTERN.test(String(from || "")) || !DATE_PATTERN.test(String(to || ""))) {
+      return null;
+    }
+
+    const start = moment.tz(from, "YYYY-MM-DD", true, TIMEZONE).startOf("day");
+    const end = moment.tz(to, "YYYY-MM-DD", true, TIMEZONE).endOf("day");
+    if (!start.isValid() || !end.isValid() || end.isBefore(start)) return null;
+    return { start, end, label: `${start.format("YYYY-MM-DD")} - ${end.format("YYYY-MM-DD")}` };
+  }
+
+  const base = getMonthBase(month);
+  return {
+    start: base.clone().startOf("month"),
+    end: base.clone().endOf("month"),
+    label: base.format("YYYY-MM"),
+  };
+};
+
+const normalizePaymentType = (type) => {
+  const value = String(type || "").toLowerCase().trim();
+  if (value === "cash") return "naqd";
+  if (["transfer", "bank"].includes(value)) return "bank";
+  return value;
 };
 
 const compareRoomRows = (a, b) => {
@@ -483,6 +513,196 @@ const getReportsSummary = async (req, res) => {
   }
 };
 
+const getClientSalesReport = async (req, res) => {
+  try {
+    const range = getReportRange({
+      from: req.query.from,
+      to: req.query.to,
+      month: req.query.month,
+    });
+    if (!range) {
+      return response.error(res, "Sana oralig'i noto'g'ri kiritilgan");
+    }
+
+    const requestedType = normalizePaymentType(req.query.type);
+    const search = String(req.query.query || "").trim();
+    const requestedClientType = String(req.query.clientType || "").toLowerCase().trim();
+    const page = Math.max(Number(req.query.page || 1), 1);
+    const limit = Math.min(Math.max(Number(req.query.limit || 30), 1), 100);
+    const allowedTypes = new Set(["naqd", "bank", "karta", "click"]);
+    const allowedClientTypes = new Set(["guest", "organization", "group"]);
+    const typeFilter = allowedTypes.has(requestedType) ? requestedType : "";
+    const clientTypeFilter = allowedClientTypes.has(requestedClientType)
+      ? requestedClientType
+      : "";
+    const match = {
+      checkInAt: {
+        $gte: range.start.toDate(),
+        $lte: range.end.toDate(),
+      },
+    };
+    if (typeFilter) match.mainPaymentType = typeFilter;
+    if (search) {
+      const searchRegex = { $regex: escapeRegex(search), $options: "i" };
+      match.$or = [
+        { firstname: searchRegex },
+        { lastname: searchRegex },
+        {
+          $expr: {
+            $regexMatch: {
+              input: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ["$firstname", ""] },
+                      " ",
+                      { $ifNull: ["$lastname", ""] },
+                    ],
+                  },
+                },
+              },
+              regex: escapeRegex(search),
+              options: "i",
+            },
+          },
+        },
+        { organization: searchRegex },
+        { passport: searchRegex },
+        { phone: searchRegex },
+      ];
+    }
+
+    const salesRows = await Guest.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: "rooms",
+          localField: "room",
+          foreignField: "_id",
+          as: "roomDoc",
+        },
+      },
+      { $unwind: { path: "$roomDoc", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "groupbookings",
+          localField: "group",
+          foreignField: "_id",
+          as: "groupDoc",
+        },
+      },
+      { $unwind: { path: "$groupDoc", preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          clientType: {
+            $cond: [
+              { $ifNull: ["$group", false] },
+              "group",
+              {
+                $cond: [
+                  { $gt: [{ $strLenCP: { $ifNull: ["$organization", ""] } }, 0] },
+                  "organization",
+                  "guest",
+                ],
+              },
+            ],
+          },
+        },
+      },
+      ...(clientTypeFilter ? [{ $match: { clientType: clientTypeFilter } }] : []),
+      { $sort: { checkInAt: -1 } },
+      {
+        $project: {
+          _id: 0,
+          guestId: "$_id",
+          fullName: {
+            $trim: {
+              input: {
+                $concat: [
+                  { $ifNull: ["$firstname", ""] },
+                  " ",
+                  { $ifNull: ["$lastname", ""] },
+                ],
+              },
+            },
+          },
+          passport: { $ifNull: ["$passport", ""] },
+          organization: { $ifNull: ["$organization", ""] },
+          clientType: 1,
+          groupName: { $ifNull: ["$groupDoc.name", ""] },
+          roomNumber: { $ifNull: ["$roomDoc.roomNumber", "-"] },
+          korpus: { $ifNull: ["$roomDoc.korpus", ""] },
+          amount: { $ifNull: ["$totalAmount", 0] },
+          paidAmount: { $ifNull: ["$paidAmount", 0] },
+          debtAmount: { $ifNull: ["$debtAmount", 0] },
+          type: "$mainPaymentType",
+          note: { $ifNull: ["$note", ""] },
+          createdAt: "$createdAt",
+          checkInAt: "$checkInAt",
+          checkOutAt: "$checkOutAt",
+        },
+      },
+    ]);
+
+    const totals = salesRows.reduce(
+      (summary, row) => {
+        const type = normalizePaymentType(row.type);
+        const amount = Number(row.amount || 0);
+        const paidAmount = Number(row.paidAmount || 0);
+        const debtAmount = Number(row.debtAmount || 0);
+        summary.total += amount;
+        summary.paidAmount += paidAmount;
+        summary.debtAmount += debtAmount;
+        summary.count += 1;
+        if (Object.prototype.hasOwnProperty.call(summary.byType, type)) {
+          summary.byType[type].amount += amount;
+          summary.byType[type].paidAmount += paidAmount;
+          summary.byType[type].debtAmount += debtAmount;
+          summary.byType[type].count += 1;
+        }
+        return summary;
+      },
+      {
+        total: 0,
+        paidAmount: 0,
+        debtAmount: 0,
+        count: 0,
+        byType: {
+          naqd: { amount: 0, paidAmount: 0, debtAmount: 0, count: 0 },
+          bank: { amount: 0, paidAmount: 0, debtAmount: 0, count: 0 },
+          karta: { amount: 0, paidAmount: 0, debtAmount: 0, count: 0 },
+          click: { amount: 0, paidAmount: 0, debtAmount: 0, count: 0 },
+        },
+      },
+    );
+
+    return response.success(res, "Mijozlar savdo hisoboti", {
+      range: {
+        from: range.start.format("YYYY-MM-DD"),
+        to: range.end.format("YYYY-MM-DD"),
+        label: range.label,
+      },
+      type: typeFilter || "all",
+      clientType: clientTypeFilter || "all",
+      totals,
+      items: salesRows.slice((page - 1) * limit, page * limit).map((row) => ({
+        ...row,
+        amount: Number(row.amount || 0),
+        paidAmount: Number(row.paidAmount || 0),
+        debtAmount: Number(row.debtAmount || 0),
+      })),
+      pagination: {
+        page,
+        limit,
+        total: salesRows.length,
+        totalPages: Math.max(Math.ceil(salesRows.length / limit), 1),
+      },
+    });
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const getDailyReport = async (req, res) => {
   try {
     const day = getReportDay(req.query.date);
@@ -674,6 +894,7 @@ const getDailyReport = async (req, res) => {
 
 module.exports = {
   calculateDailyGuestBalance,
+  getClientSalesReport,
   getDailyActiveGuestFilter,
   getDailyReport,
   getReportsSummary,

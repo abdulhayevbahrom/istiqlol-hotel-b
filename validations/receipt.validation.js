@@ -1,7 +1,7 @@
 const receiptServiceSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["name"],
+  required: ["name", "quantity", "price", "total"],
   properties: {
     name: { type: "string", minLength: 1 },
     quantity: { type: "number", minimum: 0 },
@@ -13,29 +13,58 @@ const receiptServiceSchema = {
 const createReceiptSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["hotelName", "receiptNumber", "receiptDate", "guestName"],
+  required: [
+    "hotelName",
+    "receiptNumber",
+    "receiptDate",
+    "guestName",
+    "room",
+    "checkInAt",
+    "checkOutAt",
+    "services",
+    "totalAmount",
+    "totalWords",
+    "administrator",
+  ],
   properties: {
     hotelName: {
       type: "string",
-      enum: ["Istiqlol", "Das", "Versal", "Golder Art"],
+      enum: [
+        '"Diamond Aziya Servis" MCHJga qarshli Istiqlol mehmonxonasi',
+        '"Diamond Aziya Servis" MCHJga qarshli DAS mehmonxonasi',
+        '"Diamond Aziya Servis" MCHJga qarshli Versal mehmonxonasi',
+        '"Comfort Hostel" MCHJga qarashli Golden Art yotoqxonasi',
+      ],
     },
     receiptNumber: { type: "string", minLength: 1 },
     receiptDate: { type: "string" },
     guestName: { type: "string", minLength: 1 },
-    room: { type: "string" },
-    checkInAt: { type: ["string", "null"] },
-    checkOutAt: { type: ["string", "null"] },
-    services: { type: "array", items: receiptServiceSchema, default: [] },
+    room: { type: "string", minLength: 1 },
+    checkInAt: { type: "string", minLength: 1 },
+    checkOutAt: { type: "string", minLength: 1 },
+    services: { type: "array", minItems: 1, items: receiptServiceSchema },
     totalAmount: { type: "number", minimum: 0 },
-    totalWords: { type: "string" },
-    administrator: { type: "string" },
+    totalWords: { type: "string", minLength: 1 },
+    administrator: { type: "string", minLength: 1 },
     printedAt: { type: "string" },
   },
 };
 
 const updateReceiptSchema = {
   ...createReceiptSchema,
-  required: ["hotelName", "receiptNumber", "receiptDate", "guestName"],
+  required: [
+    "hotelName",
+    "receiptNumber",
+    "receiptDate",
+    "guestName",
+    "room",
+    "checkInAt",
+    "checkOutAt",
+    "services",
+    "totalAmount",
+    "totalWords",
+    "administrator",
+  ],
 };
 
 const receiptIdParamsSchema = {
