@@ -17,10 +17,9 @@ const receiptSchema = new mongoose.Schema(
       required: true,
       trim: true,
       enum: [
-        '"Diamond Aziya Servis" MCHJga qarshli Istiqlol mehmonxonasi',
-        '"Diamond Aziya Servis" MCHJga qarshli DAS mehmonxonasi',
-        '"Diamond Aziya Servis" MCHJga qarshli Versal mehmonxonasi',
-        '"Comfort Hostel" MCHJga qarashli Golden Art yotoqxonasi',
+        "DIAMOND AZIYA SERVIS MCHJ",
+        "VERSAL-N PLAZA MCHJ",
+        "COMFORT HOSTEL MCHJ",
       ],
     },
     receiptNumber: { type: String, required: true, trim: true, unique: true },

@@ -5,6 +5,7 @@ const VipRequest = require("../model/VipRequest");
 const response = require("../utils/response");
 const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
 const { getHotelSettings, applyTimeToDate } = require("../utils/hotelSettings");
+const { pickGuestSnapshot, writeAuditLog } = require("../utils/auditLog");
 
 const escapeRegex = (value) =>
   String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -26,6 +27,28 @@ const parsePaymentDate = (value) => {
   if (!value) return new Date();
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const groupSnapshot = (group) => {
+  if (!group) return null;
+  const item =
+    typeof group.toObject === "function"
+      ? group.toObject({ versionKey: false })
+      : group;
+  return {
+    id: String(item._id || ""),
+    name: item.name,
+    phone: item.phone,
+    email: item.email,
+    bookedForAt: item.bookedForAt,
+    stayDays: item.stayDays,
+    dailyRate: item.dailyRate,
+    mainPaymentType: item.mainPaymentType,
+    rooms: (item.rooms || []).map(String),
+    guests: (item.guests || []).map(String),
+    payments: item.payments || [],
+    note: item.note,
+  };
 };
 
 const createGroupBooking = async (req, res) => {
@@ -154,6 +177,27 @@ const createGroupBooking = async (req, res) => {
       groupId: String(group._id),
       guestIds: guests.map((guest) => String(guest._id)),
     });
+
+    await writeAuditLog(req, {
+      action: "GROUP_BOOKING_CREATED",
+      entity: "GroupBooking",
+      entityId: group._id,
+      description: `${group.name} guruhi uchun bron qo'shildi`,
+      after: {
+        id: String(group._id),
+        name: group.name,
+        phone: group.phone,
+        bookedForAt: group.bookedForAt,
+        stayDays: group.stayDays,
+        rooms: group.rooms.map((room) => String(room)),
+        guests: guests.map((guest) => pickGuestSnapshot(guest)),
+      },
+      meta: {
+        guestIds: guests.map((guest) => String(guest._id)),
+        roomIds,
+      },
+    });
+
     const populated = await GroupBooking.findById(group._id)
       .populate("rooms", "roomNumber floor korpus category capacity")
       .populate("guests", "firstname lastname status dailyRate room")
@@ -250,6 +294,7 @@ const addGroupPayment = async (req, res) => {
   try {
     const group = await GroupBooking.findById(req.params.id);
     if (!group) return response.notFound(res, "Guruh topilmadi");
+    const before = groupSnapshot(group);
 
     const guests = await Guest.find({ group: group._id, vip: { $ne: true } });
     if (!guests.length) {
@@ -297,6 +342,20 @@ const addGroupPayment = async (req, res) => {
     });
     await group.save();
 
+    await writeAuditLog(req, {
+      action: "GROUP_PAYMENT_ADDED",
+      entity: "GroupBooking",
+      entityId: group._id,
+      description: `${group.name} guruhi uchun to'lov qo'shildi`,
+      before,
+      after: groupSnapshot(group),
+      meta: {
+        amount,
+        type: req.body.type,
+        guestCount: guests.length,
+      },
+    });
+
     req.app.get("socket")?.emit("guest_updated", {
       reason: "group_payment_added",
       groupId: String(group._id),
@@ -316,6 +375,7 @@ const updateGroupBooking = async (req, res) => {
   try {
     const group = await GroupBooking.findById(req.params.id);
     if (!group) return response.notFound(res, "Guruh topilmadi");
+    const before = groupSnapshot(group);
 
     const allowedFields = [
       "name",
@@ -358,6 +418,23 @@ const updateGroupBooking = async (req, res) => {
       reason: "group_booking_updated",
       groupId: String(group._id),
     });
+
+    await writeAuditLog(req, {
+      action: "GROUP_BOOKING_UPDATED",
+      entity: "GroupBooking",
+      entityId: group._id,
+      description: `${group.name} guruhi broni o'zgartirildi`,
+      before,
+      after: groupSnapshot(group),
+      changes: {
+        dailyRate: { from: before?.dailyRate, to: group.dailyRate },
+        mainPaymentType: {
+          from: before?.mainPaymentType,
+          to: group.mainPaymentType,
+        },
+      },
+    });
+
     return response.success(res, "Guruh ma'lumotlari yangilandi", group);
   } catch (error) {
     return response.serverError(res, error.message);
@@ -372,6 +449,7 @@ const deleteGroupBooking = async (req, res) => {
   try {
     const group = await GroupBooking.findById(req.params.id).lean();
     if (!group) return response.notFound(res, "Guruh topilmadi");
+    const before = groupSnapshot(group);
 
     const guests = await Guest.find({ group: group._id }).select("_id room").lean();
     const guestIds = guests.map((guest) => guest._id);
@@ -380,6 +458,18 @@ const deleteGroupBooking = async (req, res) => {
     await Guest.deleteMany({ group: group._id });
     await GroupBooking.deleteOne({ _id: group._id });
     await syncGroupRooms(roomIds);
+
+    await writeAuditLog(req, {
+      action: "GROUP_BOOKING_DELETED",
+      entity: "GroupBooking",
+      entityId: group._id,
+      description: `${group.name} guruhi broni o'chirildi`,
+      before,
+      meta: {
+        guestIds: guestIds.map(String),
+        roomIds: roomIds.map(String),
+      },
+    });
 
     req.app.get("socket")?.emit("guest_updated", {
       reason: "group_booking_deleted",

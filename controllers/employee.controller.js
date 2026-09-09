@@ -2,6 +2,7 @@ const Employee = require("../model/Employee");
 const response = require("../utils/response");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { writeAuditLog } = require("../utils/auditLog");
 
 const ACCESS_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "12h";
 const REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
@@ -27,6 +28,33 @@ const signRefreshToken = (employee) =>
   jwt.sign({ id: employee._id, login: employee.login }, REFRESH_SECRET, {
     expiresIn: REFRESH_EXPIRES_IN,
   });
+
+const employeeSnapshot = (employee) => {
+  if (!employee) return null;
+  const item =
+    typeof employee.toObject === "function"
+      ? employee.toObject({ versionKey: false })
+      : employee;
+  return {
+    id: String(item._id || ""),
+    firstname: item.firstname,
+    lastname: item.lastname,
+    position: item.position,
+    salary: item.salary,
+    canLogin: item.canLogin,
+    login: item.login,
+    sections: item.sections || [],
+    isActive: item.isActive,
+  };
+};
+
+const actorFromEmployee = (employee) => ({
+  userId: String(employee?._id || ""),
+  role: String(employee?.position || "").toLowerCase().trim(),
+  login: String(employee?.login || ""),
+  firstname: String(employee?.firstname || ""),
+  lastname: String(employee?.lastname || ""),
+});
 
 const createEmployee = async (req, res) => {
   try {
@@ -66,6 +94,15 @@ const createEmployee = async (req, res) => {
       password: canLogin ? hashedPassword : undefined,
     });
 
+    await writeAuditLog(req, {
+      action: "EMPLOYEE_CREATED",
+      entity: "Employee",
+      entityId: employee._id,
+      description: `${employee.firstname} ${employee.lastname} hodimi qo'shildi`,
+      after: employeeSnapshot(employee),
+      meta: { passwordSet: Boolean(canLogin && password) },
+    });
+
     return response.created(res, "Hodim muvaffaqiyatli qo'shildi", employee);
   } catch (error) {
     return response.serverError(res, error.message);
@@ -102,6 +139,8 @@ const updateEmployee = async (req, res) => {
     const currentEmployee = await Employee.findById(id);
 
     if (!currentEmployee) return response.notFound(res, "Hodim topilmadi");
+    const before = employeeSnapshot(currentEmployee);
+    const passwordChanged = Boolean(updates.password);
 
     const nextCanLogin = Object.prototype.hasOwnProperty.call(
       updates,
@@ -157,6 +196,23 @@ const updateEmployee = async (req, res) => {
       runValidators: true,
     });
 
+    await writeAuditLog(req, {
+      action: "EMPLOYEE_UPDATED",
+      entity: "Employee",
+      entityId: employee._id,
+      description: `${employee.firstname} ${employee.lastname} hodimi yangilandi`,
+      before,
+      after: employeeSnapshot(employee),
+      changes: {
+        position: { from: before?.position, to: employee.position },
+        canLogin: { from: before?.canLogin, to: employee.canLogin },
+        login: { from: before?.login, to: employee.login },
+        sections: { from: before?.sections, to: employee.sections || [] },
+        isActive: { from: before?.isActive, to: employee.isActive },
+        passwordChanged,
+      },
+    });
+
     if (shouldInvalidateSession) {
       const io = req.app.get("socket");
       if (io) {
@@ -175,6 +231,7 @@ const deleteEmployee = async (req, res) => {
   try {
     const employee = await Employee.findById(req.params.id);
     if (!employee) return response.notFound(res, "Hodim topilmadi");
+    const before = employeeSnapshot(employee);
 
     const io = req.app.get("socket");
     if (io) {
@@ -184,6 +241,14 @@ const deleteEmployee = async (req, res) => {
     }
 
     await Employee.findByIdAndDelete(req.params.id);
+
+    await writeAuditLog(req, {
+      action: "EMPLOYEE_DELETED",
+      entity: "Employee",
+      entityId: employee._id,
+      description: `${employee.firstname} ${employee.lastname} hodimi o'chirildi`,
+      before,
+    });
 
     return response.success(res, "Hodim o'chirildi");
   } catch (error) {
@@ -221,6 +286,14 @@ const loginEmployee = async (req, res) => {
     employee.refreshToken = refreshToken;
     await employee.save();
 
+    await writeAuditLog(req, {
+      actor: actorFromEmployee(employee),
+      action: "USER_LOGIN",
+      entity: "Employee",
+      entityId: employee._id,
+      description: `${employee.firstname} ${employee.lastname} tizimga kirdi`,
+    });
+
     return response.success(res, "Muvaffaqiyatli kirildi", {
       token,
       refreshToken,
@@ -233,6 +306,22 @@ const loginEmployee = async (req, res) => {
         sections: employee.sections || [],
       },
     });
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
+const logoutEmployee = async (req, res) => {
+  try {
+    await writeAuditLog(req, {
+      action: "USER_LOGOUT",
+      entity: "Employee",
+      entityId: req.admin?.id,
+      description: `${req.admin?.firstname || ""} ${req.admin?.lastname || ""}`.trim()
+        ? `${req.admin.firstname} ${req.admin.lastname} tizimdan chiqdi`
+        : `${req.admin?.login || "Foydalanuvchi"} tizimdan chiqdi`,
+    });
+    return response.success(res, "Tizimdan chiqildi");
   } catch (error) {
     return response.serverError(res, error.message);
   }
@@ -287,5 +376,6 @@ module.exports = {
   updateEmployee,
   deleteEmployee,
   loginEmployee,
+  logoutEmployee,
   refreshEmployeeToken,
 };

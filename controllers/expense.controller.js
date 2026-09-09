@@ -1,8 +1,27 @@
 const Expense = require("../model/Expense");
 const Employee = require("../model/Employee");
 const response = require("../utils/response");
+const { writeAuditLog } = require("../utils/auditLog");
 
 const normalizeCategory = (value) => String(value || "").trim();
+
+const expenseSnapshot = (expense) => {
+  if (!expense) return null;
+  const item =
+    typeof expense.toObject === "function"
+      ? expense.toObject({ versionKey: false })
+      : expense;
+  return {
+    id: String(item._id || ""),
+    title: item.title,
+    category: item.category,
+    amount: item.amount,
+    paymentType: item.paymentType,
+    spentAt: item.spentAt,
+    note: item.note,
+    createdBy: item.createdBy,
+  };
+};
 
 const buildCreatedBy = async (user) => {
   const actor = {
@@ -33,6 +52,13 @@ const createExpense = async (req, res) => {
     payload.createdBy = await buildCreatedBy(req.admin);
 
     const expense = await Expense.create(payload);
+    await writeAuditLog(req, {
+      action: "EXPENSE_CREATED",
+      entity: "Expense",
+      entityId: expense._id,
+      description: `${expense.title} xarajati qo'shildi`,
+      after: expenseSnapshot(expense),
+    });
     return response.created(res, "Xarajat muvaffaqiyatli qo'shildi", expense);
   } catch (error) {
     return response.serverError(res, error.message);
@@ -143,12 +169,26 @@ const updateExpense = async (req, res) => {
     const updates = { ...req.body };
     if (updates.category) updates.category = normalizeCategory(updates.category);
     if (updates.spentAt) updates.spentAt = new Date(updates.spentAt);
+    const beforeExpense = await Expense.findById(req.params.id).lean();
+    if (!beforeExpense) return response.notFound(res, "Xarajat topilmadi");
 
     const expense = await Expense.findByIdAndUpdate(req.params.id, updates, {
       returnDocument: "after",
       runValidators: true,
     });
-    if (!expense) return response.notFound(res, "Xarajat topilmadi");
+    await writeAuditLog(req, {
+      action: "EXPENSE_UPDATED",
+      entity: "Expense",
+      entityId: expense._id,
+      description: `${expense.title} xarajati yangilandi`,
+      before: expenseSnapshot(beforeExpense),
+      after: expenseSnapshot(expense),
+      changes: {
+        amount: { from: beforeExpense.amount, to: expense.amount },
+        paymentType: { from: beforeExpense.paymentType, to: expense.paymentType },
+        category: { from: beforeExpense.category, to: expense.category },
+      },
+    });
     return response.success(res, "Xarajat yangilandi", expense);
   } catch (error) {
     return response.serverError(res, error.message);
@@ -159,6 +199,13 @@ const deleteExpense = async (req, res) => {
   try {
     const expense = await Expense.findByIdAndDelete(req.params.id);
     if (!expense) return response.notFound(res, "Xarajat topilmadi");
+    await writeAuditLog(req, {
+      action: "EXPENSE_DELETED",
+      entity: "Expense",
+      entityId: expense._id,
+      description: `${expense.title} xarajati o'chirildi`,
+      before: expenseSnapshot(expense),
+    });
     return response.success(res, "Xarajat o'chirildi");
   } catch (error) {
     return response.serverError(res, error.message);
@@ -167,7 +214,15 @@ const deleteExpense = async (req, res) => {
 
 const deleteExpensesBulk = async (req, res) => {
   try {
+    const expenses = await Expense.find({ _id: { $in: req.body.ids } }).lean();
     const result = await Expense.deleteMany({ _id: { $in: req.body.ids } });
+    await writeAuditLog(req, {
+      action: "EXPENSE_BULK_DELETED",
+      entity: "Expense",
+      description: `${result.deletedCount || 0} ta xarajat o'chirildi`,
+      before: expenses.map(expenseSnapshot),
+      meta: { ids: expenses.map((expense) => String(expense._id)) },
+    });
     return response.success(res, `${result.deletedCount || 0} ta xarajat o'chirildi`, {
       deletedCount: result.deletedCount || 0,
     });

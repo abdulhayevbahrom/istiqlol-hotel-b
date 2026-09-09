@@ -32,6 +32,7 @@ const {
   updateEmployee,
   deleteEmployee,
   loginEmployee,
+  logoutEmployee,
   refreshEmployeeToken,
 } = require("../controllers/employee.controller");
 const {
@@ -65,6 +66,7 @@ const {
   getSettings,
   updateSettings,
 } = require("../controllers/setting.controller");
+const { getAuditLogs } = require("../controllers/auditLog.controller");
 const { sendSupportMessage } = require("../controllers/support.controller");
 const {
   getStatus: getBookingStatus,
@@ -115,6 +117,8 @@ const {
   getVipRequestsCount,
   decideVipRequest,
   updateGuest,
+  activateBookedGuest,
+  cancelBookedGuest,
   addGuestPayment,
   updateGuestPayment,
   addGuestService,
@@ -157,6 +161,7 @@ router.post(
   validate(refreshTokenSchema),
   refreshEmployeeToken,
 );
+router.post("/employee/logout", logoutEmployee);
 router.post(
   "/employee",
   requireSectionAccess("employees"),
@@ -225,6 +230,7 @@ router.delete(
 );
 router.get("/settings", getSettings);
 router.put("/settings", validate(updateSettingsSchema), updateSettings);
+router.get("/audit-logs", requireSectionAccess("audit-logs"), getAuditLogs);
 router.post("/service", validate(createServiceSchema), createService);
 router.get("/services", getServices);
 router.post("/receipt", validate(createReceiptSchema), createReceipt);
@@ -344,6 +350,16 @@ router.post(
   "/guest/:id/checkout",
   validate(guestIdParamsSchema, "params"),
   checkoutGuest,
+);
+router.post(
+  "/guest/:id/activate-booking",
+  validate(guestIdParamsSchema, "params"),
+  activateBookedGuest,
+);
+router.post(
+  "/guest/:id/cancel-booking",
+  validate(guestIdParamsSchema, "params"),
+  cancelBookedGuest,
 );
 router.post(
   "/guest/:id/continue",

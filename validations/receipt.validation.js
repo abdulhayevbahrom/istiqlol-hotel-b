@@ -30,10 +30,9 @@ const createReceiptSchema = {
     hotelName: {
       type: "string",
       enum: [
-        '"Diamond Aziya Servis" MCHJga qarshli Istiqlol mehmonxonasi',
-        '"Diamond Aziya Servis" MCHJga qarshli DAS mehmonxonasi',
-        '"Diamond Aziya Servis" MCHJga qarshli Versal mehmonxonasi',
-        '"Comfort Hostel" MCHJga qarashli Golden Art yotoqxonasi',
+        "DIAMOND AZIYA SERVIS MCHJ",
+        "VERSAL-N PLAZA MCHJ",
+        "COMFORT HOSTEL MCHJ",
       ],
     },
     receiptNumber: { type: "string", minLength: 1 },

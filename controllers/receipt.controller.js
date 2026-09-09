@@ -1,5 +1,24 @@
 const Receipt = require("../model/Receipt");
 const response = require("../utils/response");
+const { writeAuditLog } = require("../utils/auditLog");
+
+const receiptSnapshot = (receipt) => {
+  if (!receipt) return null;
+  const item =
+    typeof receipt.toObject === "function"
+      ? receipt.toObject({ versionKey: false })
+      : receipt;
+  return {
+    id: String(item._id || ""),
+    receiptNumber: item.receiptNumber,
+    receiptDate: item.receiptDate,
+    guestName: item.guestName,
+    room: item.room,
+    totalAmount: item.totalAmount,
+    administrator: item.administrator,
+    createdBy: item.createdBy,
+  };
+};
 
 const normalizeService = (service) => {
   const quantity = Number(service?.quantity || 0);
@@ -37,6 +56,14 @@ const createReceipt = async (req, res) => {
       administrator: String(req.body.administrator || "").trim(),
       printedAt: req.body.printedAt || new Date(),
       createdBy: req.admin?.id,
+    });
+
+    await writeAuditLog(req, {
+      action: "RECEIPT_CREATED",
+      entity: "Receipt",
+      entityId: receipt._id,
+      description: `${receipt.receiptNumber} kvitansiya yaratildi`,
+      after: receiptSnapshot(receipt),
     });
 
     return response.created(res, "Kvitansiya saqlandi", receipt);
@@ -113,12 +140,25 @@ const getReceipts = async (req, res) => {
 
 const updateReceipt = async (req, res) => {
   try {
+    const before = await Receipt.findById(req.params.id).lean();
+    if (!before) return response.notFound(res, "Kvitansiya topilmadi");
     const receipt = await Receipt.findByIdAndUpdate(
       req.params.id,
       buildReceiptPayload(req.body),
       { returnDocument: "after", runValidators: true },
     );
-    if (!receipt) return response.notFound(res, "Kvitansiya topilmadi");
+    await writeAuditLog(req, {
+      action: "RECEIPT_UPDATED",
+      entity: "Receipt",
+      entityId: receipt._id,
+      description: `${receipt.receiptNumber} kvitansiya yangilandi`,
+      before: receiptSnapshot(before),
+      after: receiptSnapshot(receipt),
+      changes: {
+        totalAmount: { from: before.totalAmount, to: receipt.totalAmount },
+        receiptNumber: { from: before.receiptNumber, to: receipt.receiptNumber },
+      },
+    });
     return response.success(res, "Kvitansiya yangilandi", receipt);
   } catch (error) {
     if (error?.code === 11000) {
@@ -132,6 +172,13 @@ const deleteReceipt = async (req, res) => {
   try {
     const receipt = await Receipt.findByIdAndDelete(req.params.id);
     if (!receipt) return response.notFound(res, "Kvitansiya topilmadi");
+    await writeAuditLog(req, {
+      action: "RECEIPT_DELETED",
+      entity: "Receipt",
+      entityId: receipt._id,
+      description: `${receipt.receiptNumber} kvitansiya o'chirildi`,
+      before: receiptSnapshot(receipt),
+    });
     return response.success(res, "Kvitansiya o'chirildi");
   } catch (error) {
     return response.serverError(res, error.message);

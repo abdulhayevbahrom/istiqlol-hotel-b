@@ -1,6 +1,7 @@
 const HallBooking = require("../model/HallBooking");
 const Employee = require("../model/Employee");
 const response = require("../utils/response");
+const { writeAuditLog } = require("../utils/auditLog");
 
 const buildCreatedBy = async (user) => {
   const actor = {
@@ -99,6 +100,29 @@ const attachRuntimeState = (booking) => {
   return { ...normalized, eventState: "ongoing" };
 };
 
+const hallBookingSnapshot = (booking) => {
+  if (!booking) return null;
+  const item =
+    typeof booking.toObject === "function"
+      ? booking.toObject({ versionKey: false })
+      : booking;
+  return {
+    id: String(item._id || ""),
+    hallName: item.hallName,
+    eventName: item.eventName,
+    customerFirstname: item.customerFirstname,
+    customerLastname: item.customerLastname,
+    phone: item.phone,
+    startDate: item.startDate,
+    endDate: item.endDate,
+    totalAmount: item.totalAmount,
+    paidAmount: item.paidAmount,
+    debtAmount: item.debtAmount,
+    status: item.status,
+    payments: item.payments || [],
+  };
+};
+
 const createHallBooking = async (req, res) => {
   try {
     const payload = normalizeBookingInput(req.body);
@@ -142,6 +166,14 @@ const createHallBooking = async (req, res) => {
       createdBy: await buildCreatedBy(req.admin),
     });
 
+    await writeAuditLog(req, {
+      action: "HALL_BOOKING_CREATED",
+      entity: "HallBooking",
+      entityId: booking._id,
+      description: `${booking.hallName} zali uchun bron qo'shildi`,
+      after: hallBookingSnapshot(booking),
+    });
+
     return response.created(res, "Zal ijarasi qo'shildi", attachRuntimeState(booking.toObject()));
   } catch (error) {
     return response.serverError(res, error.message);
@@ -168,6 +200,7 @@ const updateHallBooking = async (req, res) => {
   try {
     const current = await HallBooking.findById(req.params.id);
     if (!current) return response.notFound(res, "Zal ijarasi topilmadi");
+    const before = hallBookingSnapshot(current);
 
     const payload = normalizeBookingInput({
       ...current.toObject(),
@@ -203,6 +236,21 @@ const updateHallBooking = async (req, res) => {
     current.debtAmount = Math.max(current.totalAmount - Number(current.paidAmount || 0), 0);
     await current.save();
 
+    await writeAuditLog(req, {
+      action: "HALL_BOOKING_UPDATED",
+      entity: "HallBooking",
+      entityId: current._id,
+      description: `${current.hallName} zali broni yangilandi`,
+      before,
+      after: hallBookingSnapshot(current),
+      changes: {
+        totalAmount: { from: before?.totalAmount, to: current.totalAmount },
+        debtAmount: { from: before?.debtAmount, to: current.debtAmount },
+        startDate: { from: before?.startDate, to: current.startDate },
+        endDate: { from: before?.endDate, to: current.endDate },
+      },
+    });
+
     return response.success(
       res,
       "Zal ijarasi yangilandi",
@@ -217,6 +265,7 @@ const addHallBookingPayment = async (req, res) => {
   try {
     const booking = await HallBooking.findById(req.params.id);
     if (!booking) return response.notFound(res, "Zal ijarasi topilmadi");
+    const before = hallBookingSnapshot(booking);
 
     const amount = Number(req.body.amount || 0);
     const paymentDate = parsePaymentDate(req.body.paymentDate);
@@ -236,6 +285,16 @@ const addHallBookingPayment = async (req, res) => {
     booking.debtAmount = Math.max(Number(booking.totalAmount || 0) - booking.paidAmount, 0);
     await booking.save();
 
+    await writeAuditLog(req, {
+      action: "HALL_PAYMENT_ADDED",
+      entity: "HallBooking",
+      entityId: booking._id,
+      description: `${booking.hallName} zali uchun to'lov qo'shildi`,
+      before,
+      after: hallBookingSnapshot(booking),
+      meta: { amount, type: req.body.type || "naqd" },
+    });
+
     return response.success(
       res,
       "To'lov qo'shildi",
@@ -250,12 +309,25 @@ const cancelHallBooking = async (req, res) => {
   try {
     const booking = await HallBooking.findById(req.params.id);
     if (!booking) return response.notFound(res, "Zal ijarasi topilmadi");
+    const before = hallBookingSnapshot(booking);
     if (booking.status === "canceled") {
       return response.error(res, "Buyurtma allaqachon bekor qilingan");
     }
 
     booking.status = "canceled";
     await booking.save();
+
+    await writeAuditLog(req, {
+      action: "HALL_BOOKING_CANCELLED",
+      entity: "HallBooking",
+      entityId: booking._id,
+      description: `${booking.hallName} zali broni bekor qilindi`,
+      before,
+      after: hallBookingSnapshot(booking),
+      changes: {
+        status: { from: before?.status, to: booking.status },
+      },
+    });
 
     return response.success(
       res,
@@ -271,6 +343,13 @@ const deleteHallBooking = async (req, res) => {
   try {
     const booking = await HallBooking.findByIdAndDelete(req.params.id);
     if (!booking) return response.notFound(res, "Zal ijarasi topilmadi");
+    await writeAuditLog(req, {
+      action: "HALL_BOOKING_DELETED",
+      entity: "HallBooking",
+      entityId: booking._id,
+      description: `${booking.hallName} zali broni o'chirildi`,
+      before: hallBookingSnapshot(booking),
+    });
     return response.success(res, "Buyurtma o'chirildi");
   } catch (error) {
     return response.serverError(res, error.message);

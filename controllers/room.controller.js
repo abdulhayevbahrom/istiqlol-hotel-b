@@ -9,6 +9,7 @@ const {
   ROOM_IMAGES_DIR,
   removeUploadedFiles,
 } = require("../middleware/roomImageUpload.middleware");
+const { writeAuditLog } = require("../utils/auditLog");
 
 const parseMultipartPayload = (payload) => {
   const parsed = { ...payload };
@@ -49,6 +50,25 @@ const normalizeKorpus = (value) => {
 };
 const normalizeCategory = (value) => String(value || "").trim();
 
+const roomSnapshot = (room) => {
+  if (!room) return null;
+  const item =
+    typeof room.toObject === "function"
+      ? room.toObject({ versionKey: false })
+      : room;
+  return {
+    id: String(item._id || ""),
+    roomNumber: item.roomNumber,
+    korpus: item.korpus,
+    floor: item.floor,
+    category: item.category,
+    capacity: item.capacity,
+    prices: item.prices,
+    status: item.status,
+    activeGuestsCount: item.activeGuestsCount,
+  };
+};
+
 const createRoom = async (req, res) => {
   try {
     const payload = parseMultipartPayload(req.body);
@@ -81,6 +101,15 @@ const createRoom = async (req, res) => {
       activeGuestsCount: 0,
       status: "bosh",
     });
+
+    await writeAuditLog(req, {
+      action: "ROOM_CREATED",
+      entity: "Room",
+      entityId: room._id,
+      description: `${room.korpus}-${room.roomNumber} xona qo'shildi`,
+      after: roomSnapshot(room),
+    });
+
     return response.created(res, "Xona muvaffaqiyatli qo'shildi", room);
   } catch (error) {
     removeUploadedFiles(req.files);
@@ -118,6 +147,7 @@ const updateRoom = async (req, res) => {
       removeUploadedFiles(req.files);
       return response.notFound(res, "Xona topilmadi");
     }
+    const before = roomSnapshot(current);
 
     if (updates.roomNumber) {
       const legacy = parseLegacyRoomNumber(updates.roomNumber);
@@ -185,6 +215,27 @@ const updateRoom = async (req, res) => {
     }
 
     const nextRoom = await Room.findById(room._id);
+    const after = roomSnapshot(nextRoom);
+    const priceChanged =
+      JSON.stringify(before?.prices || null) !== JSON.stringify(after?.prices || null);
+
+    await writeAuditLog(req, {
+      action: priceChanged ? "ROOM_PRICE_UPDATED" : "ROOM_UPDATED",
+      entity: "Room",
+      entityId: nextRoom._id,
+      description: priceChanged
+        ? `${nextRoom.korpus}-${nextRoom.roomNumber} xona narxi o'zgartirildi`
+        : `${nextRoom.korpus}-${nextRoom.roomNumber} xona yangilandi`,
+      before,
+      after,
+      changes: {
+        prices: { from: before?.prices, to: after?.prices },
+        status: { from: before?.status, to: after?.status },
+        capacity: { from: before?.capacity, to: after?.capacity },
+        category: { from: before?.category, to: after?.category },
+      },
+    });
+
     return response.success(res, "Xona yangilandi", nextRoom);
   } catch (error) {
     removeUploadedFiles(req.files);
@@ -197,6 +248,13 @@ const deleteRoom = async (req, res) => {
     const room = await Room.findByIdAndDelete(req.params.id);
     if (!room) return response.notFound(res, "Xona topilmadi");
     await deleteRoomImageFiles(room.images);
+    await writeAuditLog(req, {
+      action: "ROOM_DELETED",
+      entity: "Room",
+      entityId: room._id,
+      description: `${room.korpus}-${room.roomNumber} xona o'chirildi`,
+      before: roomSnapshot(room),
+    });
     return response.success(res, "Xona o'chirildi");
   } catch (error) {
     return response.serverError(res, error.message);

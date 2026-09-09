@@ -21,6 +21,7 @@ const {
   getDailyRateForDay,
   getLodgingTotal,
 } = require("../utils/guestDailyRates");
+const { pickGuestSnapshot, writeAuditLog } = require("../utils/auditLog");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -363,14 +364,6 @@ const createGuest = async (req, res) => {
       );
     }
 
-    const [activeCount, wholeRoomBlocked] = await Promise.all([
-      Guest.countDocuments({ room, status: "active" }),
-      Guest.exists({ room, status: "active", blocksWholeRoom: true }),
-    ]);
-    if (wholeRoomBlocked || activeCount >= roomDoc.capacity) {
-      return response.error(res, "Xonada bo'sh joy yo'q");
-    }
-
     const hotelSettings = await getHotelSettings();
     const normalizedDailyRate = Number(dailyRate || 0);
     const normalizedStayDays = Math.max(Number(stayDays || 1), 1);
@@ -388,6 +381,16 @@ const createGuest = async (req, res) => {
           res,
           "Bron vaqti hozirgi vaqtdan oldin bo'lishi mumkin emas",
         );
+      }
+    }
+
+    if (!isReservation) {
+      const [activeCount, wholeRoomBlocked] = await Promise.all([
+        Guest.countDocuments({ room, status: "active" }),
+        Guest.exists({ room, status: "active", blocksWholeRoom: true }),
+      ]);
+      if (wholeRoomBlocked || activeCount >= roomDoc.capacity) {
+        return response.error(res, "Xonada bo'sh joy yo'q");
       }
     }
 
@@ -490,6 +493,20 @@ const createGuest = async (req, res) => {
     if (!isReservation) {
       await syncRoomOccupancy(roomDoc._id);
     }
+
+    await writeAuditLog(req, {
+      action: isReservation ? "BOOKING_CREATED" : "GUEST_CHECKED_IN",
+      entity: "Guest",
+      entityId: guest._id,
+      description: isReservation
+        ? `${guest.firstname} ${guest.lastname} uchun bron qo'shildi`
+        : `${guest.firstname} ${guest.lastname} qabul qilindi`,
+      after: pickGuestSnapshot(guest),
+      meta: {
+        roomId: String(roomDoc._id),
+        roomNumber: roomDoc.roomNumber,
+      },
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
@@ -709,6 +726,20 @@ const createGuestsBulk = async (req, res) => {
 
     if (!isReservation) await syncRoomOccupancy(roomDoc._id);
 
+    await writeAuditLog(req, {
+      action: isReservation ? "BOOKING_BULK_CREATED" : "GUEST_BULK_CHECKED_IN",
+      entity: "Guest",
+      description: isReservation
+        ? `${createdGuests.length} ta mehmon bron qilindi`
+        : `${createdGuests.length} ta mehmon qabul qilindi`,
+      after: createdGuests.map((guest) => pickGuestSnapshot(guest)),
+      meta: {
+        guestIds: createdGuests.map((guest) => String(guest._id)),
+        roomId: String(roomDoc._id),
+        roomNumber: roomDoc.roomNumber,
+      },
+    });
+
     emitGuestChanged(req.app.get("socket"), {
       roomId: String(room || ""),
       reason: isReservation ? "guest_bulk_booked" : "guest_bulk_created",
@@ -744,7 +775,7 @@ const buildGuestsFilter = async ({
 }) => {
   const filter = {};
 
-  if (tab === "active") filter.status = { $in: ["active", "booked"] };
+  if (tab === "active") filter.status = "active";
   if (tab === "history") filter.status = "checked_out";
   if (tab === "booked") filter.status = "booked";
   if (tab === "debtors") filter.debtAmount = { $gt: 0 };
@@ -928,8 +959,8 @@ const getGuests = async (req, res) => {
       endDate: req.query.endDate,
     });
     const sort =
-      tab === "active"
-        ? { createdAt: -1 }
+      tab === "booked"
+        ? { bookedForAt: 1, createdAt: -1 }
         : { createdAt: -1 };
 
     const guestsQuery = Guest.find(filter)
@@ -951,6 +982,9 @@ const getGuests = async (req, res) => {
       const organization = String(runtimeGuest.organization || "").trim();
       return {
         ...runtimeGuest,
+        isBookingDue:
+          runtimeGuest.status === "booked" &&
+          new Date(runtimeGuest.bookedForAt || 0).getTime() <= Date.now(),
         clientType: runtimeGuest.group
           ? "group"
           : organization
@@ -1025,6 +1059,131 @@ const getGuests = async (req, res) => {
         totalPages,
       },
     });
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
+const activateBookedGuest = async (req, res) => {
+  try {
+    const guest = await Guest.findById(req.params.id);
+    if (!guest) return response.notFound(res, "Bron topilmadi");
+    if (guest.status !== "booked") {
+      return response.error(res, "Faqat bron qilingan mehmon aktiv qilinadi");
+    }
+    const before = pickGuestSnapshot(guest);
+
+    const roomDoc = await Room.findById(guest.room);
+    if (!roomDoc) return response.notFound(res, "Xona topilmadi");
+    if (roomDoc.status === "remont") {
+      return response.error(res, "Bu xona remont/yopiq holatda");
+    }
+
+    const [activeCount, wholeRoomBlocked] = await Promise.all([
+      Guest.countDocuments({ room: guest.room, status: "active" }),
+      Guest.exists({ room: guest.room, status: "active", blocksWholeRoom: true }),
+    ]);
+    if (wholeRoomBlocked || activeCount >= Number(roomDoc.capacity || 0)) {
+      return response.error(res, "Xonada bo'sh joy yo'q");
+    }
+
+    const hotelSettings = await getHotelSettings();
+    const now = new Date();
+    const billing = buildBillingState(
+      now,
+      Math.max(Number(guest.stayDays || 1), 1),
+      now,
+      hotelSettings,
+    );
+
+    guest.status = "active";
+    guest.checkInAt = now;
+    guest.bookedForAt = guest.bookedForAt || now;
+    guest.acceptedBy = await buildActionBy(req.admin);
+    guest.checkoutReminderAt = billing.checkoutReminderAt;
+    guest.checkoutDueAt = billing.checkoutDueAt;
+    guest.stayDays = billing.stayDays;
+    guest.billableDays = billing.billableDays;
+    const servicesTotal = (guest.services || []).reduce(
+      (sum, service) => sum + Number(service?.totalAmount || 0),
+      0,
+    );
+    guest.totalAmount =
+      getLodgingTotal(guest, billing.billableDays) + servicesTotal;
+    recalcAmounts(guest);
+    await guest.save();
+    await syncRoomOccupancy(guest.room);
+
+    await writeAuditLog(req, {
+      action: "BOOKING_ACTIVATED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} broni aktiv qilindi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        status: { from: before?.status, to: guest.status },
+        checkInAt: { from: before?.checkInAt, to: guest.checkInAt },
+        checkoutDueAt: { from: before?.checkoutDueAt, to: guest.checkoutDueAt },
+      },
+      meta: {
+        roomId: String(roomDoc._id),
+        roomNumber: roomDoc.roomNumber,
+      },
+    });
+
+    emitGuestChanged(req.app.get("socket"), {
+      guestId: String(guest._id),
+      roomId: String(guest.room || ""),
+      status: guest.status,
+      reason: "guest_booking_activated",
+    });
+
+    const populated = await Guest.findById(guest._id).populate("room").lean();
+    return response.success(
+      res,
+      "Bron aktiv mijozga o'tkazildi",
+      attachGuestRuntimeFlags(populated),
+    );
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
+const cancelBookedGuest = async (req, res) => {
+  try {
+    const guest = await Guest.findById(req.params.id);
+    if (!guest) return response.notFound(res, "Bron topilmadi");
+    if (guest.status !== "booked") {
+      return response.error(res, "Faqat bron qilingan mehmon bekor qilinadi");
+    }
+    const before = pickGuestSnapshot(guest);
+
+    guest.status = "cancelled";
+    guest.cancelledAt = new Date();
+    await guest.save();
+
+    await writeAuditLog(req, {
+      action: "BOOKING_CANCELLED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} broni bekor qilindi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        status: { from: before?.status, to: guest.status },
+        cancelledAt: { from: before?.cancelledAt || null, to: guest.cancelledAt },
+      },
+    });
+
+    emitGuestChanged(req.app.get("socket"), {
+      guestId: String(guest._id),
+      roomId: String(guest.room || ""),
+      status: guest.status,
+      reason: "guest_booking_cancelled",
+    });
+
+    return response.success(res, "Bron bekor qilindi", guest);
   } catch (error) {
     return response.serverError(res, error.message);
   }
@@ -1109,6 +1268,7 @@ const updateGuest = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
     const previousRoomId = String(guest.room);
     const dailyRateChanged =
       Object.prototype.hasOwnProperty.call(req.body, "dailyRate") &&
@@ -1361,6 +1521,27 @@ const updateGuest = async (req, res) => {
       await syncRoomOccupancy(nextRoomId);
     }
 
+    await writeAuditLog(req, {
+      action: guest.status === "booked" ? "BOOKING_UPDATED" : "GUEST_UPDATED",
+      entity: "Guest",
+      entityId: guest._id,
+      description:
+        guest.status === "booked"
+          ? `${guest.firstname} ${guest.lastname} broni o'zgartirildi`
+          : `${guest.firstname} ${guest.lastname} ma'lumotlari o'zgartirildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        status: { from: before?.status, to: guest.status },
+        room: { from: before?.room, to: String(guest.room || "") },
+        dailyRate: { from: before?.dailyRate, to: guest.dailyRate },
+        paidAmount: { from: before?.paidAmount, to: guest.paidAmount },
+        debtAmount: { from: before?.debtAmount, to: guest.debtAmount },
+        bookedForAt: { from: before?.bookedForAt, to: guest.bookedForAt },
+        checkoutDueAt: { from: before?.checkoutDueAt, to: guest.checkoutDueAt },
+      },
+    });
+
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
       roomId: nextRoomId,
@@ -1440,6 +1621,7 @@ const decideVipRequest = async (req, res) => {
 
     const guest = await Guest.findById(request.guest);
     if (!guest) return response.notFound(res, "Bog'langan mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
 
     const decisionBy = await buildActionBy(req.admin);
     request.status = action === "approve" ? "approved" : "rejected";
@@ -1465,6 +1647,22 @@ const decideVipRequest = async (req, res) => {
     }
 
     await guest.save();
+
+    await writeAuditLog(req, {
+      action: action === "approve" ? "VIP_APPROVED" : "VIP_REJECTED",
+      entity: "Guest",
+      entityId: guest._id,
+      description:
+        action === "approve"
+          ? `${guest.firstname} ${guest.lastname} VIP so'rovi tasdiqlandi`
+          : `${guest.firstname} ${guest.lastname} VIP so'rovi rad etildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      meta: {
+        vipRequestId: String(request._id),
+        note: request.note,
+      },
+    });
 
     const io = req.app.get("socket");
     if (io) {
@@ -1508,6 +1706,7 @@ const addGuestPayment = async (req, res) => {
     const { amount, type, note = "", paymentDate } = req.body;
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
     // if (guest.status !== "active") return response.error(res, "Faqat active mehmon uchun to'lov qo'shiladi");
     if (guest.vip)
       return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
@@ -1525,6 +1724,28 @@ const addGuestPayment = async (req, res) => {
     guest.paidAmount = Number(guest.paidAmount || 0) + Number(amount);
     recalcAmounts(guest);
     await guest.save();
+    const payment = guest.payments[guest.payments.length - 1];
+
+    await writeAuditLog(req, {
+      action: "PAYMENT_ADDED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} uchun to'lov qo'shildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        paidAmount: { from: before?.paidAmount, to: guest.paidAmount },
+        debtAmount: { from: before?.debtAmount, to: guest.debtAmount },
+      },
+      meta: {
+        payment: {
+          amount: payment.amount,
+          type: payment.type,
+          note: payment.note,
+          createdAt: payment.createdAt,
+        },
+      },
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
@@ -1563,6 +1784,13 @@ const updateGuestPayment = async (req, res) => {
     }
 
     const payment = guest.payments[paymentIndex];
+    const before = pickGuestSnapshot(guest);
+    const previousPayment = {
+      amount: payment.amount,
+      type: payment.type,
+      note: payment.note,
+      createdAt: payment.createdAt,
+    };
     if (Object.prototype.hasOwnProperty.call(req.body, "amount")) {
       const nextAmount = Number(req.body.amount);
       if (!Number.isFinite(nextAmount) || nextAmount < 0) {
@@ -1590,6 +1818,29 @@ const updateGuestPayment = async (req, res) => {
     recalcAmounts(guest);
     await guest.save();
 
+    await writeAuditLog(req, {
+      action: "PAYMENT_UPDATED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} to'lovi o'zgartirildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        paidAmount: { from: before?.paidAmount, to: guest.paidAmount },
+        debtAmount: { from: before?.debtAmount, to: guest.debtAmount },
+      },
+      meta: {
+        paymentIndex,
+        beforePayment: previousPayment,
+        afterPayment: {
+          amount: payment.amount,
+          type: payment.type,
+          note: payment.note,
+          createdAt: payment.createdAt,
+        },
+      },
+    });
+
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
       roomId: String(guest.room || ""),
@@ -1610,6 +1861,7 @@ const addGuestService = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
     if (guest.status === "checked_out") {
       return response.error(
         res,
@@ -1650,6 +1902,18 @@ const addGuestService = async (req, res) => {
     recalcAmounts(guest);
     await guest.save();
 
+    await writeAuditLog(req, {
+      action: "GUEST_SERVICE_ADDED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} uchun xizmat qo'shildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      meta: {
+        service: guest.services[guest.services.length - 1],
+      },
+    });
+
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
       roomId: String(guest.room || ""),
@@ -1674,6 +1938,7 @@ const checkoutGuest = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
     if (guest.status === "checked_out") {
       return response.error(res, "Mehmon allaqachon checkout qilingan");
     }
@@ -1686,6 +1951,19 @@ const checkoutGuest = async (req, res) => {
     await guest.save();
 
     await syncRoomOccupancy(guest.room);
+
+    await writeAuditLog(req, {
+      action: "GUEST_CHECKED_OUT",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} checkout qilindi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        status: { from: before?.status, to: guest.status },
+        checkOutAt: { from: before?.checkOutAt, to: guest.checkOutAt },
+      },
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
@@ -1710,6 +1988,7 @@ const continueGuestStay = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
     if (guest.status !== "checked_out") {
       return response.error(
         res,
@@ -1779,6 +2058,20 @@ const continueGuestStay = async (req, res) => {
     await guest.save();
 
     await syncRoomOccupancy(guest.room);
+    await writeAuditLog(req, {
+      action: "GUEST_STAY_CONTINUED",
+      entity: "Guest",
+      entityId: guest._id,
+      description: `${guest.firstname} ${guest.lastname} yashashi davom ettirildi`,
+      before,
+      after: pickGuestSnapshot(guest),
+      changes: {
+        status: { from: before?.status, to: guest.status },
+        stayDays: { from: before?.stayDays, to: guest.stayDays },
+        checkoutDueAt: { from: before?.checkoutDueAt, to: guest.checkoutDueAt },
+      },
+    });
+
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
       roomId: String(guest.room || ""),
@@ -1822,6 +2115,7 @@ const checkoutGuestsBulk = async (req, res) => {
     const checkoutBy = await buildActionBy(req.admin);
     const now = new Date();
     const roomIds = [...new Set(activeGuests.map((guest) => String(guest.room || "")))];
+    const beforeGuests = activeGuests.map((guest) => pickGuestSnapshot(guest));
 
     await Guest.bulkWrite(
       activeGuests.map((guest) => ({
@@ -1840,6 +2134,20 @@ const checkoutGuestsBulk = async (req, res) => {
     );
 
     await syncRoomsOccupancyBatch(roomIds);
+
+    await writeAuditLog(req, {
+      action: "GUEST_BULK_CHECKED_OUT",
+      entity: "Guest",
+      description: `${activeGuests.length} ta mehmon checkout qilindi`,
+      before: beforeGuests,
+      changes: {
+        status: { from: "active/booked", to: "checked_out" },
+      },
+      meta: {
+        guestIds: activeGuests.map((guest) => String(guest._id)),
+        roomIds,
+      },
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestIds: activeGuests.map((guest) => String(guest._id)),
@@ -1863,6 +2171,7 @@ const deleteGuest = async (req, res) => {
   try {
     const guest = await Guest.findByIdAndDelete(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    const before = pickGuestSnapshot(guest);
 
     const deleteResult = await VipRequest.deleteMany({ guest: guest._id });
     if (deleteResult?.deletedCount > 0) {
@@ -1875,6 +2184,17 @@ const deleteGuest = async (req, res) => {
     if (guest.room) {
       await syncRoomOccupancy(guest.room);
     }
+
+    await writeAuditLog(req, {
+      action: guest.status === "booked" ? "BOOKING_DELETED" : "GUEST_DELETED",
+      entity: "Guest",
+      entityId: guest._id,
+      description:
+        guest.status === "booked"
+          ? `${guest.firstname} ${guest.lastname} broni o'chirildi`
+          : `${guest.firstname} ${guest.lastname} o'chirildi`,
+      before,
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
@@ -1905,6 +2225,8 @@ module.exports = {
   getVipRequestsCount,
   decideVipRequest,
   updateGuest,
+  activateBookedGuest,
+  cancelBookedGuest,
   addGuestPayment,
   updateGuestPayment,
   addGuestService,

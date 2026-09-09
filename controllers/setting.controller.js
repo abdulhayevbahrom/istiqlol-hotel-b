@@ -5,6 +5,7 @@ const {
   getHotelSettings,
   parseTime,
 } = require("../utils/hotelSettings");
+const { writeAuditLog } = require("../utils/auditLog");
 
 const getSettings = async (_, res) => {
   try {
@@ -61,11 +62,24 @@ const updateSettings = async (req, res) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
+    const nextSettings = { ...DEFAULT_HOTEL_SETTINGS, ...settings };
+
+    await writeAuditLog(req, {
+      action: "SETTINGS_UPDATED",
+      entity: "Setting",
+      description: "Hotel sozlamalari o'zgartirildi",
+      before: current,
+      after: nextSettings,
+      changes: Object.keys(updates).reduce((acc, key) => {
+        acc[key] = { from: current?.[key], to: nextSettings?.[key] };
+        return acc;
+      }, {}),
+    });
 
     return response.success(
       res,
       "Sozlamalar yangilandi",
-      { ...DEFAULT_HOTEL_SETTINGS, ...settings },
+      nextSettings,
     );
   } catch (error) {
     return response.serverError(res, error.message);
