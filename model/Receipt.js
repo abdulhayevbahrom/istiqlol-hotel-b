@@ -28,6 +28,7 @@ const receiptSchema = new mongoose.Schema(
     room: { type: String, required: true, trim: true },
     checkInAt: { type: Date, required: true },
     checkOutAt: { type: Date, required: true },
+    remainingDays: { type: Number, min: 0, default: 0 },
     services: { type: [receiptServiceSchema], default: [] },
     totalAmount: { type: Number, min: 0, default: 0 },
     totalWords: { type: String, required: true, trim: true },

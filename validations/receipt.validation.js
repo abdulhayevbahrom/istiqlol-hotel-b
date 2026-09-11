@@ -41,6 +41,7 @@ const createReceiptSchema = {
     room: { type: "string", minLength: 1 },
     checkInAt: { type: "string", minLength: 1 },
     checkOutAt: { type: "string", minLength: 1 },
+    remainingDays: { type: "number", minimum: 0 },
     services: { type: "array", minItems: 1, items: receiptServiceSchema },
     totalAmount: { type: "number", minimum: 0 },
     totalWords: { type: "string", minLength: 1 },

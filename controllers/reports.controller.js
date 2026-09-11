@@ -706,6 +706,14 @@ const getClientSalesReport = async (req, res) => {
 const getDailyReport = async (req, res) => {
   try {
     const day = getReportDay(req.query.date);
+    const includeAllRooms = String(req.query.includeAllRooms || "") === "true";
+    const roomFilters = {};
+    const korpus = String(req.query.korpus || "").trim().toUpperCase();
+    const floor = Number(req.query.floor || 0);
+    if (includeAllRooms && korpus) roomFilters.korpus = korpus;
+    if (includeAllRooms && Number.isFinite(floor) && floor > 0) {
+      roomFilters.floor = floor;
+    }
     if (!day) {
       return response.error(res, "Sana YYYY-MM-DD formatida bo'lishi kerak");
     }
@@ -719,7 +727,7 @@ const getDailyReport = async (req, res) => {
     const dayStart = day.clone().hour(12).minute(0).second(0).millisecond(0).toDate();
     const nextDayStart = day.clone().add(1, "day").hour(12).minute(0).second(0).millisecond(0).toDate();
 
-    const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, totalRooms] =
+    const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, rooms] =
       await Promise.all([
         Guest.aggregate([
           { $unwind: "$payments" },
@@ -768,7 +776,10 @@ const getDailyReport = async (req, res) => {
           )
           .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
-        Room.countDocuments({ createdAt: { $lt: nextDayStart } }),
+        Room.find({ createdAt: { $lt: nextDayStart }, ...roomFilters })
+          .select("_id roomNumber floor korpus capacity category prices status")
+          .sort({ roomNumber: 1 })
+          .lean(),
       ]);
 
     const payments = [...guestPaymentRows, ...hallPaymentRows]
@@ -820,7 +831,7 @@ const getDailyReport = async (req, res) => {
         closingDebt: balance.closing.debt,
       };
     });
-    const groupedGuestRows = Array.from(
+    const occupiedGuestRows = Array.from(
       activeGuestRows.reduce((rooms, guest) => {
         const key = String(guest.roomId || guest.roomNumber || "");
         const current = rooms.get(key);
@@ -845,7 +856,44 @@ const getDailyReport = async (req, res) => {
       ...guest,
       fullName: guest.fullName.filter(Boolean).join("\n"),
     })).sort(compareRoomRows);
-    const occupiedRooms = groupedGuestRows.length;
+    const filteredOccupiedGuestRows = includeAllRooms
+      ? occupiedGuestRows.filter((guest) => {
+          const matchesKorpus = !roomFilters.korpus || guest.korpus === roomFilters.korpus;
+          const matchesFloor = !roomFilters.floor || Number(guest.floor) === Number(roomFilters.floor);
+          return matchesKorpus && matchesFloor;
+        })
+      : occupiedGuestRows;
+    const groupedGuestRows = includeAllRooms
+      ? [
+          ...filteredOccupiedGuestRows,
+          ...rooms
+            .filter(
+              (room) =>
+                !filteredOccupiedGuestRows.some(
+                  (guest) => String(guest.roomId || "") === String(room._id || ""),
+                ),
+            )
+            .map((room) => ({
+              roomId: room._id,
+              roomNumber: room.roomNumber || "-",
+              floor: room.floor || "-",
+              korpus: room.korpus || "-",
+              organization: "",
+              guestCount: 0,
+              dailyRate: 0,
+              breakfast: 0,
+              openingPrepayment: 0,
+              openingDebt: 0,
+              cash: 0,
+              card: 0,
+              transfer: 0,
+              fullName: "",
+              closingPrepayment: 0,
+              closingDebt: 0,
+            })),
+        ].sort(compareRoomRows)
+      : filteredOccupiedGuestRows;
+    const occupiedRooms = filteredOccupiedGuestRows.length;
     const arrivals = await Guest.countDocuments({ checkInAt: { $gte: dayStart, $lt: nextDayStart } });
     const departures = await Guest.countDocuments({ checkOutAt: { $gte: dayStart, $lt: nextDayStart } });
 
@@ -876,7 +924,7 @@ const getDailyReport = async (req, res) => {
       },
       operations: {
         occupiedRooms,
-        availableRooms: Math.max(0, Number(totalRooms || 0) - occupiedRooms),
+        availableRooms: Math.max(0, Number(rooms.length || 0) - occupiedRooms),
         arrivals,
         departures,
         guests: activeGuests.length,
