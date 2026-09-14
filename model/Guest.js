@@ -117,7 +117,7 @@ const guestSchema = new mongoose.Schema(
     // saqlanmaydi; faqat bronni takrorlamasdan yangilash uchun zarur IDlar.
     source: {
       type: String,
-      enum: ["manual", "booking_com"],
+      enum: ["manual", "booking_com", "website"],
       default: "manual",
     },
     externalHotelId: { type: String, trim: true, default: "" },

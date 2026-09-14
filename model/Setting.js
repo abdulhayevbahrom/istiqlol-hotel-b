@@ -21,6 +21,22 @@ const settingSchema = new mongoose.Schema(
       type: [String],
       default: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
     },
+    roomCategoryImages: {
+      type: [
+        {
+          category: { type: String, required: true, trim: true },
+          images: {
+            type: [{ type: String, trim: true }],
+            default: [],
+            validate: {
+              validator: (images) => images.length <= 8,
+              message: "Har bir kategoriya uchun ko'pi bilan 8 ta rasm saqlanishi mumkin",
+            },
+          },
+        },
+      ],
+      default: [],
+    },
     logo: {
       type: String,
       default: "",

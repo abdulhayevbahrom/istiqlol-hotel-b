@@ -65,6 +65,7 @@ const {
 const {
   getSettings,
   updateSettings,
+  updateRoomCategoryImages,
 } = require("../controllers/setting.controller");
 const { getAuditLogs } = require("../controllers/auditLog.controller");
 const { sendSupportMessage } = require("../controllers/support.controller");
@@ -230,6 +231,7 @@ router.delete(
 );
 router.get("/settings", getSettings);
 router.put("/settings", validate(updateSettingsSchema), updateSettings);
+router.put("/settings/room-category-images", uploadRoomImages, updateRoomCategoryImages);
 router.get("/audit-logs", requireSectionAccess("audit-logs"), getAuditLogs);
 router.post("/service", validate(createServiceSchema), createService);
 router.get("/services", getServices);

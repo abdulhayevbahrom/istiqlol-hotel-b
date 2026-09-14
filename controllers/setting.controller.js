@@ -1,4 +1,5 @@
 const Setting = require("../model/Setting");
+const Room = require("../model/Room");
 const response = require("../utils/response");
 const {
   DEFAULT_HOTEL_SETTINGS,
@@ -6,6 +7,20 @@ const {
   parseTime,
 } = require("../utils/hotelSettings");
 const { writeAuditLog } = require("../utils/auditLog");
+const { removeUploadedFiles } = require("../middleware/roomImageUpload.middleware");
+
+const roomImagePaths = (files = []) => files.map((file) => `/uploads/rooms/${file.filename}`);
+
+const normalizeCategoryImageItems = (items = []) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      category: String(item?.category || "").trim(),
+      images: (Array.isArray(item?.images) ? item.images : [])
+        .map((image) => String(image || "").trim())
+        .filter(Boolean)
+        .slice(0, 8),
+    }))
+    .filter((item) => item.category);
 
 const getSettings = async (_, res) => {
   try {
@@ -39,6 +54,9 @@ const updateSettings = async (req, res) => {
       if (!updates.roomCategories.length) {
         return response.error(res, "Xona kategoriyalari bo'sh bo'lishi mumkin emas");
       }
+    }
+    if (Array.isArray(updates.roomCategoryImages)) {
+      updates.roomCategoryImages = normalizeCategoryImageItems(updates.roomCategoryImages);
     }
 
     const current = await getHotelSettings();
@@ -86,7 +104,116 @@ const updateSettings = async (req, res) => {
   }
 };
 
+const updateRoomCategoryImages = async (req, res) => {
+  try {
+    const category = String(req.body.category || "").trim();
+    if (!category) {
+      removeUploadedFiles(req.files);
+      return response.error(res, "Kategoriya nomi majburiy");
+    }
+
+    let existingImages = [];
+    if (typeof req.body.existingImages === "string") {
+      existingImages = JSON.parse(req.body.existingImages);
+    } else if (Array.isArray(req.body.existingImages)) {
+      existingImages = req.body.existingImages;
+    }
+    existingImages = existingImages
+      .map((image) => String(image || "").trim())
+      .filter(Boolean);
+
+    const nextImages = [...existingImages, ...roomImagePaths(req.files)];
+    if (nextImages.length > 8) {
+      removeUploadedFiles(req.files);
+      return response.error(res, "Har bir kategoriya uchun ko'pi bilan 8 ta rasm yuklash mumkin");
+    }
+
+    const current = await getHotelSettings();
+    if (!current.roomCategories.includes(category)) {
+      removeUploadedFiles(req.files);
+      return response.error(res, "Kategoriya sozlamalarda mavjud emas");
+    }
+
+    const nextCategoryImages = normalizeCategoryImageItems(current.roomCategoryImages)
+      .filter((item) => item.category !== category);
+    nextCategoryImages.push({ category, images: nextImages });
+
+    const settings = await Setting.findOneAndUpdate(
+      {},
+      { $set: { roomCategoryImages: nextCategoryImages } },
+      {
+        upsert: true,
+        returnDocument: "after",
+        setDefaultsOnInsert: true,
+      },
+    ).lean();
+
+    return response.success(res, "Kategoriya rasmlari saqlandi", {
+      ...DEFAULT_HOTEL_SETTINGS,
+      ...settings,
+      roomCategoryImages: normalizeCategoryImageItems(settings.roomCategoryImages),
+    });
+  } catch (error) {
+    removeUploadedFiles(req.files);
+    return response.serverError(res, error.message);
+  }
+};
+
+const getPublicRoomCategories = async (_, res) => {
+  try {
+    const settings = await getHotelSettings();
+    const imageMap = new Map(
+      normalizeCategoryImageItems(settings.roomCategoryImages)
+        .map((item) => [item.category, item.images]),
+    );
+    const rooms = await Room.find({ status: { $ne: "remont" } })
+      .select("category capacity prices images")
+      .lean();
+    const groups = new Map();
+
+    rooms.forEach((room) => {
+      const category = String(room?.category || "").trim();
+      if (!category) return;
+      const current = groups.get(category) || {
+        category,
+        minForeignPrice: 0,
+        capacity: 0,
+        count: 0,
+        images: imageMap.get(category) || [],
+      };
+      const price = Number(room?.prices?.chetEllik || 0);
+      groups.set(category, {
+        ...current,
+        minForeignPrice:
+          !current.minForeignPrice || (price && price < current.minForeignPrice)
+            ? price
+            : current.minForeignPrice,
+        capacity: Math.max(current.capacity, Number(room?.capacity || 0)),
+        count: current.count + 1,
+        images: current.images.length ? current.images : (room?.images || []).slice(0, 8),
+      });
+    });
+
+    const categories = settings.roomCategories.map((category) => {
+      const grouped = groups.get(category);
+      return grouped || {
+        category,
+        minForeignPrice: 0,
+        capacity: 0,
+        count: 0,
+        images: imageMap.get(category) || [],
+      };
+    });
+
+    return response.success(res, "Xona kategoriyalari", categories);
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
+  updateRoomCategoryImages,
+  getPublicRoomCategories,
 };

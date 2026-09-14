@@ -358,7 +358,6 @@ const startGuestBillingCron = (io) => {
     reminderKey: "",
     overdueKey: "",
     checkoutKey: "",
-    activating: false,
     overdueRunning: false,
     checkoutRunning: false,
   };
@@ -381,15 +380,6 @@ const startGuestBillingCron = (io) => {
         if (state.reminderKey !== reminderKey) {
           state.reminderKey = reminderKey;
           await runReminderJob(io, nowTz.toDate());
-        }
-      }
-
-      if (!state.activating) {
-        state.activating = true;
-        try {
-          await runActivateDueBookingsJob(io);
-        } finally {
-          state.activating = false;
         }
       }
 
@@ -445,7 +435,6 @@ const startGuestBillingCron = (io) => {
   // Aks holda server 12:00 dan bir necha soniya keyin ishga tushsa,
   // chiqayotgan mijozga ortiqcha kun yozilishi mumkin.
   const runStartupJobs = async () => {
-    await runActivateDueBookingsJob(io);
     await runAutomaticCheckoutJob(io);
     await runOverdueBillingJob(io);
   };
@@ -453,8 +442,8 @@ const startGuestBillingCron = (io) => {
     // eslint-disable-next-line no-console
     console.error("Guest billing startup error:", error.message);
   });
-  // Har 30 sekundda vaqt triggerini tekshiradi
-  const interval = setInterval(tick, 30 * 1000);
+  // Har 60 sekundda vaqt triggerini tekshiradi
+  const interval = setInterval(tick, 60 * 1000);
   return interval;
 };
 

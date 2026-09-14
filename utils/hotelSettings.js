@@ -5,6 +5,7 @@ const DEFAULT_HOTEL_SETTINGS = {
   checkoutTime: "12:00",
   reminderTime: "12:00",
   roomCategories: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
+  roomCategoryImages: [],
   logo: "",
   receiptThankYouText: "Tashrifingiz uchun rahmat! Yana sizni kutib qolamiz.",
 };

@@ -145,6 +145,7 @@ const createPublicBooking = async (req, res) => {
       debtAmount: 0,
       payments: [],
       status: "booked",
+      source: "website",
       acceptedBy: null,
       checkInAt: checkIn,
       note: [
