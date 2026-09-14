@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const multer = require("multer");
@@ -32,6 +33,21 @@ const removeUploadedFiles = (files = []) => {
   });
 };
 
+const removeStoredRoomImages = async (images = []) => {
+  await Promise.all(
+    images.map(async (image) => {
+      const imagePath = String(image || "");
+      const fileName = path.basename(imagePath);
+      if (!fileName || fileName !== imagePath.split("/").pop()) return;
+      try {
+        await fsPromises.unlink(path.join(ROOM_IMAGES_DIR, fileName));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }),
+  );
+};
+
 const uploadRoomImages = (req, res, next) => {
   roomImageUpload(req, res, (error) => {
     if (!error) return next();
@@ -60,6 +76,7 @@ module.exports = {
   MAX_ROOM_IMAGES,
   ROOM_IMAGES_DIR,
   removeUploadedFiles,
+  removeStoredRoomImages,
   parseRoomMultipartBody,
   uploadRoomImages,
 };

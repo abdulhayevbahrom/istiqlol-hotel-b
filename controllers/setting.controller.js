@@ -7,7 +7,10 @@ const {
   parseTime,
 } = require("../utils/hotelSettings");
 const { writeAuditLog } = require("../utils/auditLog");
-const { removeUploadedFiles } = require("../middleware/roomImageUpload.middleware");
+const {
+  removeStoredRoomImages,
+  removeUploadedFiles,
+} = require("../middleware/roomImageUpload.middleware");
 
 const roomImagePaths = (files = []) => files.map((file) => `/uploads/rooms/${file.filename}`);
 
@@ -60,6 +63,18 @@ const updateSettings = async (req, res) => {
     }
 
     const current = await getHotelSettings();
+    let removedCategoryImages = [];
+    if (Array.isArray(updates.roomCategories)) {
+      const activeCategories = new Set(updates.roomCategories);
+      removedCategoryImages = normalizeCategoryImageItems(current.roomCategoryImages)
+        .filter((item) => !activeCategories.has(item.category))
+        .flatMap((item) => item.images);
+      const categoryImages = Array.isArray(updates.roomCategoryImages)
+        ? updates.roomCategoryImages
+        : normalizeCategoryImageItems(current.roomCategoryImages);
+      updates.roomCategoryImages = categoryImages
+        .filter((item) => activeCategories.has(item.category));
+    }
     const checkout = parseTime(updates.checkoutTime || current.checkoutTime);
     const reminder = parseTime(updates.reminderTime || current.reminderTime);
     const checkoutMinutes = checkout.hour * 60 + checkout.minute;
@@ -81,6 +96,8 @@ const updateSettings = async (req, res) => {
       },
     ).lean();
     const nextSettings = { ...DEFAULT_HOTEL_SETTINGS, ...settings };
+
+    await removeStoredRoomImages(removedCategoryImages);
 
     await writeAuditLog(req, {
       action: "SETTINGS_UPDATED",
@@ -136,6 +153,10 @@ const updateRoomCategoryImages = async (req, res) => {
 
     const nextCategoryImages = normalizeCategoryImageItems(current.roomCategoryImages)
       .filter((item) => item.category !== category);
+    const previousImages = normalizeCategoryImageItems(current.roomCategoryImages)
+      .find((item) => item.category === category)?.images || [];
+    const retainedImageSet = new Set(existingImages);
+    const removedImages = previousImages.filter((image) => !retainedImageSet.has(image));
     nextCategoryImages.push({ category, images: nextImages });
 
     const settings = await Setting.findOneAndUpdate(
@@ -147,6 +168,8 @@ const updateRoomCategoryImages = async (req, res) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
+
+    await removeStoredRoomImages(removedImages);
 
     return response.success(res, "Kategoriya rasmlari saqlandi", {
       ...DEFAULT_HOTEL_SETTINGS,
