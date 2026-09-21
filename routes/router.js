@@ -1,4 +1,6 @@
 const router = require("express").Router();
+const staffPayroll = require("../controllers/staffPayroll.controller");
+const response = require("../utils/response");
 const validate = require("../middleware/validate.middleware");
 const {
   createEmployeeSchema,
@@ -163,6 +165,12 @@ router.post(
   refreshEmployeeToken,
 );
 router.post("/employee/logout", logoutEmployee);
+router.use((req, res, next) => {
+  if (req.method === "DELETE" && req.admin?.role !== "owner") {
+    return response.forbidden(res, "O'chirish huquqi faqat ownerga berilgan");
+  }
+  next();
+});
 router.post(
   "/employee",
   requireSectionAccess("employees"),
@@ -189,6 +197,21 @@ router.delete(
   validate(employeeIdParamsSchema, "params"),
   deleteEmployee,
 );
+router.get("/staff-attendance", requireSectionAccess("attendance"), staffPayroll.listAttendance);
+router.get("/staff-people", requireSectionAccess("attendance"), getEmployees);
+router.post("/staff-attendance", requireSectionAccess("attendance"), staffPayroll.saveAttendance);
+router.put("/staff-attendance/:id", requireSectionAccess("attendance"), staffPayroll.updateAttendance);
+router.delete("/staff-attendance/:id", requireSectionAccess("attendance"), staffPayroll.deleteAttendance);
+router.get("/staff-payroll/people", requireSectionAccess("payroll"), getEmployees);
+router.get("/staff-payroll", requireSectionAccess("payroll"), staffPayroll.report);
+router.get("/staff-payroll/history", requireSectionAccess("payroll"), staffPayroll.history);
+router.get("/staff-payroll/entries", requireSectionAccess("payroll"), staffPayroll.listEntries);
+router.get("/staff-payroll/entry-history", requireSectionAccess("payroll"), staffPayroll.employeeEntryHistory);
+router.get("/staff-payroll/payment-history", requireSectionAccess("payroll"), staffPayroll.paymentHistory);
+router.get("/staff-payroll/outstanding-months", requireSectionAccess("payroll"), staffPayroll.outstandingMonths);
+router.post("/staff-payroll/entries", requireSectionAccess("payroll"), staffPayroll.saveEntry);
+router.put("/staff-payroll/entries/:id", requireSectionAccess("payroll"), staffPayroll.updateEntry);
+router.delete("/staff-payroll/entries/:id", requireSectionAccess("payroll"), staffPayroll.deleteEntry);
 router.post(
   "/group-booking/:id/payment",
   validate(groupBookingIdParamsSchema, "params"),

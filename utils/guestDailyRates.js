@@ -35,7 +35,7 @@ const getDailyRateForDay = (guest, day) => {
     Math.max(Number(guest?.stayDays || 1), Number(day || 1)),
     guest?.dailyRate,
   ).find((item) => item.day === Number(day));
-  return Number(rate?.amount || guest?.dailyRate || 0);
+  return Number(rate?.amount ?? guest?.dailyRate ?? 0);
 };
 
 const getLodgingTotal = (guest, billableDays = guest?.billableDays) => {
@@ -45,9 +45,22 @@ const getLodgingTotal = (guest, billableDays = guest?.billableDays) => {
   ).reduce((sum, amount) => sum + amount, 0);
 };
 
+const getRatesAfterRoomTransfer = (guest, firstNewRoomDay, newRate) => {
+  const days = Math.max(Number(guest?.stayDays || 1), 1);
+  const switchDay = Math.max(Number(firstNewRoomDay || 1), 1);
+  const amount = Math.max(Number(newRate || 0), 0);
+  return Array.from({ length: days }, (_, index) => ({
+    day: index + 1,
+    amount: index + 1 < switchDay
+      ? getDailyRateForDay(guest, index + 1)
+      : amount,
+  }));
+};
+
 module.exports = {
   normalizeDailyRates,
   compactDailyRates,
   getDailyRateForDay,
   getLodgingTotal,
+  getRatesAfterRoomTransfer,
 };

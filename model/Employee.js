@@ -17,11 +17,26 @@ const employeeSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    role: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
     salary: {
       type: Number,
       required: true,
       min: 0,
     },
+    salaryType: {
+      type: String,
+      enum: ["fixed", "hourly"],
+      default: "fixed",
+    },
+    salaryHistory: [{
+      fromMonth: { type: String, required: true },
+      salary: { type: Number, required: true, min: 0 },
+      salaryType: { type: String, required: true, enum: ["fixed", "hourly"] },
+    }],
     canLogin: {
       type: Boolean,
       default: false,
@@ -61,5 +76,9 @@ const employeeSchema = new mongoose.Schema(
 
 // Hodimlar listida createdAt bo'yicha sort ishlatilgani uchun.
 employeeSchema.index({ createdAt: -1 });
+employeeSchema.index(
+  { role: 1 },
+  { unique: true, partialFilterExpression: { role: "owner" } },
+);
 
 module.exports = mongoose.model("Employee", employeeSchema);

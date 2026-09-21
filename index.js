@@ -36,6 +36,7 @@ const allowedOrigins = [
   "https://www.istiqlolhotel.uz",
   "https://istiqlol-hotel.vercel.app",
   "https://istiqlol-hotel-website.vercel.app",
+  "http://localhost:5173",
   ...(process.env.CLIENT_ORIGINS || "").split(","),
 ]
   .map((origin) => normalizeOrigin(origin.trim()))

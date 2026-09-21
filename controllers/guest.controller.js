@@ -20,8 +20,10 @@ const {
   compactDailyRates,
   getDailyRateForDay,
   getLodgingTotal,
+  getRatesAfterRoomTransfer,
 } = require("../utils/guestDailyRates");
 const { pickGuestSnapshot, writeAuditLog } = require("../utils/auditLog");
+const { recordRoomTransfer } = require("../utils/guestRoomStays");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -1139,7 +1141,7 @@ const activateBookedGuest = async (req, res) => {
       reason: "guest_booking_activated",
     });
 
-    const populated = await Guest.findById(guest._id).populate("room").lean();
+    const populated = await Guest.findById(guest._id).populate("room").populate("roomStays.room").lean();
     return response.success(
       res,
       "Bron aktiv mijozga o'tkazildi",
@@ -1215,9 +1217,10 @@ const getOccupancy = async (req, res) => {
       ],
     })
       .select(
-        "firstname lastname room status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note source externalReservationId externalRoomTypeId externalCurrency externalTotalAmount",
+        "firstname lastname room roomStays status checkInAt checkOutAt bookedForAt checkoutDueAt stayDays note source externalReservationId externalRoomTypeId externalCurrency externalTotalAmount",
       )
       .populate("room", "roomNumber floor korpus category")
+      .populate("roomStays.room", "roomNumber floor korpus category")
       .sort({ checkInAt: 1 })
       .lean();
 
@@ -1233,7 +1236,7 @@ const getGuestById = async (req, res) => {
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
     if (guest.status === "active") await syncGuestBilling(guest);
 
-    const next = await Guest.findById(req.params.id).populate("room").lean();
+    const next = await Guest.findById(req.params.id).populate("room").populate("roomStays.room").lean();
     return response.success(
       res,
       "Mehmon ma'lumotlari",
@@ -1343,9 +1346,11 @@ const updateGuest = async (req, res) => {
       updates.checkOutAt = editedCheckOutAt;
     }
 
+    let transferRoom = null;
     if (updates.room && String(updates.room) !== String(guest.room)) {
       const targetRoom = await Room.findById(updates.room).lean();
       if (!targetRoom) return response.notFound(res, "Xona topilmadi");
+      transferRoom = targetRoom;
       if (targetRoom.status === "remont") {
         return response.error(
           res,
@@ -1410,7 +1415,32 @@ const updateGuest = async (req, res) => {
       : false;
     delete updates.vip;
 
+    const isActiveRoomTransfer = Boolean(transferRoom && guest.status === "active");
+    let transferRates = null;
+    let transferRate = null;
+    if (isActiveRoomTransfer) {
+      const transferAt = new Date();
+      const nextGuestType = updates.guestType || guest.guestType;
+      const roomRate = Number(nextGuestType === "chetellik"
+        ? transferRoom.prices?.chetEllik
+        : transferRoom.prices?.oddiy);
+      transferRate = dailyRateChanged ? Number(updates.dailyRate) : roomRate;
+      if (!Number.isFinite(transferRate) || transferRate < 0) {
+        return response.error(res, "Yangi xona narxi noto'g'ri");
+      }
+      transferRates = getRatesAfterRoomTransfer(
+        guest,
+        getAccruedStayDays(guest, transferAt),
+        transferRate,
+      );
+      recordRoomTransfer(guest, previousRoomId, updates.room, transferAt);
+    }
+
     Object.assign(guest, updates);
+    if (isActiveRoomTransfer) {
+      guest.dailyRate = transferRate;
+      guest.dailyRates = transferRates;
+    }
 
     if (editedCheckOutAt) {
       const hotelSettings = await getHotelSettings();
@@ -1442,7 +1472,13 @@ const updateGuest = async (req, res) => {
       guest.stayDays = Math.max(Number(req.body.stayDays || 1), 1);
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
+    if (isActiveRoomTransfer) {
+      guest.dailyRates = compactDailyRates(
+        transferRates,
+        guest.stayDays,
+        guest.dailyRate,
+      );
+    } else if (Object.prototype.hasOwnProperty.call(req.body, "dailyRates")) {
       guest.dailyRates = compactDailyRates(
         req.body.dailyRates,
         guest.stayDays,
@@ -1551,7 +1587,7 @@ const updateGuest = async (req, res) => {
       reason: "guest_updated",
     });
 
-    const populated = await Guest.findById(guest._id).populate("room").lean();
+    const populated = await Guest.findById(guest._id).populate("room").populate("roomStays.room").lean();
     return response.success(
       res,
       "Mehmon ma'lumotlari yangilandi",

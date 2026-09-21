@@ -63,14 +63,15 @@ test("payments after the report cutoff are excluded", () => {
   assert.deepEqual(result.closing, { prepayment: 0, debt: 300000 });
 });
 
-test("checkout exactly at operational day start belongs to the previous day", () => {
-  const filter = getDailyActiveGuestFilter({ dayStart, nextDayStart });
+test("daily room snapshot excludes guests who checked out before replacement moved in", () => {
+  const snapshotAt = new Date(nextDayStart.getTime() - 1);
+  const filter = getDailyActiveGuestFilter({ snapshotAt });
 
   assert.deepEqual(filter, {
-    checkInAt: { $lt: nextDayStart },
+    checkInAt: { $lte: snapshotAt },
     $or: [
       { status: "active" },
-      { status: "checked_out", checkOutAt: { $gt: dayStart } },
+      { status: "checked_out", checkOutAt: { $gt: snapshotAt } },
     ],
   });
 });

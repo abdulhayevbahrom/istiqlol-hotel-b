@@ -79,6 +79,15 @@ const guestSchema = new mongoose.Schema(
 
     // Yashash ma'lumotlari
     room: { type: mongoose.Schema.Types.ObjectId, ref: "Room", required: true },
+    roomStays: {
+      type: [{
+        room: { type: mongoose.Schema.Types.ObjectId, ref: "Room", required: true },
+        from: { type: Date, required: true },
+        to: { type: Date, default: null },
+        _id: false,
+      }],
+      default: [],
+    },
     stayDays: { type: Number, required: true, min: 1, default: 1 }, // Kunlar
     billableDays: { type: Number, required: true, min: 1, default: 1 }, // Narxlanadigan kunlar
     checkoutReminderAt: { type: Date, default: null }, // Checkoutni qoldirish vaqt

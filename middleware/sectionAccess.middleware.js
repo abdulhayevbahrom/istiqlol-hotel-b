@@ -1,4 +1,5 @@
 const response = require("../utils/response");
+const { hasFullAccess } = require("../utils/roleAccess");
 
 const guestSections = new Set([
   "guests",
@@ -37,6 +38,7 @@ const requireSectionAccess = (section) => (req, res, next) => {
   const user = req.admin;
 
   if (!user) return response.unauthorized(res, "Avval tizimga kiring");
+  if (hasFullAccess(user.role)) return next();
   if (hasSectionAccess(user.sections || [], section)) return next();
 
   return response.forbidden(res, "Bu bo'limga ruxsat yo'q");

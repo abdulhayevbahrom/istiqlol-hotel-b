@@ -8,6 +8,7 @@ const VipRequest = require("../model/VipRequest");
 const HallBooking = require("../model/HallBooking");
 const response = require("../utils/response");
 const { getDailyRateForDay, getLodgingTotal } = require("../utils/guestDailyRates");
+const { getRoomAt } = require("../utils/guestRoomStays");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -136,13 +137,11 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart }
   return { opening, closing, payments };
 };
 
-const getDailyActiveGuestFilter = ({ dayStart, nextDayStart }) => ({
-  checkInAt: { $lt: nextDayStart },
+const getDailyActiveGuestFilter = ({ snapshotAt }) => ({
+  checkInAt: { $lte: snapshotAt },
   $or: [
     { status: "active" },
-    // Occupancy intervals are half-open: a checkout exactly at dayStart
-    // belongs to the previous operational day, not the new one.
-    { status: "checked_out", checkOutAt: { $gt: dayStart } },
+    { status: "checked_out", checkOutAt: { $gt: snapshotAt } },
   ],
 });
 
@@ -726,26 +725,25 @@ const getDailyReport = async (req, res) => {
     // Hotel daily reports follow the operational day: 12:00 to 12:00.
     const dayStart = day.clone().hour(12).minute(0).second(0).millisecond(0).toDate();
     const nextDayStart = day.clone().add(1, "day").hour(12).minute(0).second(0).millisecond(0).toDate();
+    const snapshotAt = new Date(Math.min(Date.now(), nextDayStart.getTime() - 1));
 
     const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, rooms] =
       await Promise.all([
         Guest.aggregate([
           { $unwind: "$payments" },
           { $match: { "payments.createdAt": { $gte: dayStart, $lt: nextDayStart } } },
-          { $lookup: { from: "rooms", localField: "room", foreignField: "_id", as: "roomDoc" } },
-          { $unwind: { path: "$roomDoc", preserveNullAndEmptyArrays: true } },
           { $sort: { "payments.createdAt": 1 } },
           { $project: {
             _id: 0,
+            guestId: { $toString: "$_id" },
+            room: "$room",
+            roomStays: "$roomStays",
+            checkInAt: "$checkInAt",
+            firstname: "$firstname",
+            lastname: "$lastname",
             amount: { $ifNull: ["$payments.amount", 0] },
             type: "$payments.type",
             createdAt: "$payments.createdAt",
-            source: {
-              $concat: [
-                "Xona ", { $ifNull: ["$roomDoc.roomNumber", "-"] }, " - ",
-                { $ifNull: ["$firstname", ""] }, " ", { $ifNull: ["$lastname", ""] },
-              ],
-            },
           } },
         ]),
         HallBooking.aggregate([
@@ -769,10 +767,11 @@ const getDailyReport = async (req, res) => {
           { $match: { "services.usedAt": { $gte: dayStart, $lt: nextDayStart } } },
           { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
         ]).then((rows) => rows?.[0] || {}),
-        Guest.find(getDailyActiveGuestFilter({ dayStart, nextDayStart }))
+        Guest.find(getDailyActiveGuestFilter({ snapshotAt }))
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
+          .populate("roomStays.room", "roomNumber floor korpus capacity category prices")
           .select(
-            "firstname lastname organization room stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
+            "firstname lastname organization room roomStays stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
           )
           .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
@@ -781,6 +780,23 @@ const getDailyReport = async (req, res) => {
           .sort({ roomNumber: 1 })
           .lean(),
       ]);
+
+    const historicalRoomIds = [...new Set([...activeGuests, ...guestPaymentRows]
+      .flatMap((guest) => [guest.room, ...(guest.roomStays || []).map((stay) => stay.room)])
+      .map((room) => String(room?._id || room))
+      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id)))];
+    const historicalRooms = historicalRoomIds.length
+      ? await Room.find({ _id: { $in: historicalRoomIds } })
+        .select("_id roomNumber floor korpus capacity category prices").lean()
+      : [];
+    const roomById = new Map([...rooms, ...historicalRooms]
+      .map((room) => [String(room._id), room]));
+
+    guestPaymentRows.forEach((row) => {
+      const roomAtPayment = getRoomAt(row, row.createdAt);
+      const paymentRoom = roomById.get(String(roomAtPayment?._id || roomAtPayment));
+      row.source = `Xona ${paymentRoom?.roomNumber || "-"} - ${row.firstname || ""} ${row.lastname || ""}`.trim();
+    });
 
     const payments = [...guestPaymentRows, ...hallPaymentRows]
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
@@ -795,7 +811,8 @@ const getDailyReport = async (req, res) => {
     );
     const expenseTotal = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const activeGuestRows = activeGuests.map((guest) => {
-      const roomDoc = guest.room || {};
+      const roomAtDate = getRoomAt(guest, snapshotAt);
+      const roomDoc = roomById.get(String(roomAtDate?._id || roomAtDate)) || roomAtDate || {};
       const fullName = `${guest.firstname || ""} ${guest.lastname || ""}`.trim();
       const baseDailyRate = Number(guest.dailyRate || roomDoc.prices?.oddiy || 0);
       const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
