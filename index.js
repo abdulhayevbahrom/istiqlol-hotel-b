@@ -11,6 +11,9 @@ const router = require("./routes/router");
 const authMiddleware = require("./middleware/AuthMiddleware");
 const {
   createPublicBooking,
+  getPublicRoomAvailability,
+  getPublicBookingConfirmation,
+  downloadPublicBookingPdf,
 } = require("./controllers/publicBooking.controller");
 const { getPublicRoomCategories } = require("./controllers/setting.controller");
 const { getRooms } = require("./controllers/room.controller");
@@ -92,6 +95,9 @@ app.use(["/api", "/uploads"], requireAllowedClientOrigin);
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.get("/api/rooms", getRooms);
 app.get("/api/public/room-categories", getPublicRoomCategories);
+app.get("/api/public/room-availability", getPublicRoomAvailability);
+app.get("/api/public/booking/:token", getPublicBookingConfirmation);
+app.get("/api/public/booking/:token/pdf", downloadPublicBookingPdf);
 app.post("/api/public/booking", createPublicBooking);
 app.use("/api", authMiddleware, router); // Routerlarni ulash
 app.get("/", (req, res) => res.send("Salom dunyo")); // Bosh sahifa

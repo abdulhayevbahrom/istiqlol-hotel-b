@@ -199,17 +199,23 @@ const getPublicRoomCategories = async (_, res) => {
       if (!category) return;
       const current = groups.get(category) || {
         category,
+        minLocalPrice: 0,
         minForeignPrice: 0,
         capacity: 0,
         count: 0,
         images: imageMap.get(category) || [],
       };
-      const price = Number(room?.prices?.chetEllik || 0);
+      const localPrice = Number(room?.prices?.oddiy || 0);
+      const foreignPrice = Number(room?.prices?.chetEllik || 0);
       groups.set(category, {
         ...current,
+        minLocalPrice:
+          !current.minLocalPrice || (localPrice && localPrice < current.minLocalPrice)
+            ? localPrice
+            : current.minLocalPrice,
         minForeignPrice:
-          !current.minForeignPrice || (price && price < current.minForeignPrice)
-            ? price
+          !current.minForeignPrice || (foreignPrice && foreignPrice < current.minForeignPrice)
+            ? foreignPrice
             : current.minForeignPrice,
         capacity: Math.max(current.capacity, Number(room?.capacity || 0)),
         count: current.count + 1,
@@ -217,15 +223,13 @@ const getPublicRoomCategories = async (_, res) => {
       });
     });
 
-    const categories = settings.roomCategories.map((category) => {
-      const grouped = groups.get(category);
-      return grouped || {
-        category,
-        minForeignPrice: 0,
-        capacity: 0,
-        count: 0,
-        images: imageMap.get(category) || [],
-      };
+    const categoryOrder = new Map(
+      settings.roomCategories.map((category, index) => [category, index]),
+    );
+    const categories = [...groups.values()].sort((a, b) => {
+      const aIndex = categoryOrder.get(a.category) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = categoryOrder.get(b.category) ?? Number.MAX_SAFE_INTEGER;
+      return aIndex - bIndex || a.category.localeCompare(b.category);
     });
 
     return response.success(res, "Xona kategoriyalari", categories);

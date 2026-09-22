@@ -848,6 +848,8 @@ const buildGuestsFilter = async ({
       { lastname: searchRegex },
       { passport: searchRegex },
       { organization: searchRegex },
+      { bookingReference: searchRegex },
+      { externalReservationId: searchRegex },
     ];
     if (roomIds.length) searchOr.push({ room: { $in: roomIds } });
     if (filter.$or) {
@@ -967,7 +969,7 @@ const getGuests = async (req, res) => {
 
     const guestsQuery = Guest.find(filter)
       .sort(sort)
-      .populate("room", "roomNumber floor korpus category")
+      .populate("room", "roomNumber floor korpus category capacity")
       .populate("group", "name organization");
     if (tab !== "active") {
       guestsQuery.skip((page - 1) * limit).limit(limit);
@@ -1186,6 +1188,81 @@ const cancelBookedGuest = async (req, res) => {
     });
 
     return response.success(res, "Bron bekor qilindi", guest);
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
+const resolveWebsiteBookingRooms = async (req, res) => {
+  try {
+    const bookingReference = String(req.params.reference || "").trim();
+    const activeGuestIds = [...new Set((Array.isArray(req.body.activeGuestIds) ? req.body.activeGuestIds : []).map(String))];
+    if (!bookingReference || !activeGuestIds.length) {
+      return response.error(res, "Aktiv qilinadigan kamida bitta xonani tanlang");
+    }
+
+    const guests = await Guest.find({ bookingReference, status: "booked" });
+    if (!guests.length) return response.notFound(res, "Bron topilmadi");
+    const allowedIds = new Set(guests.map((guest) => String(guest._id)));
+    if (activeGuestIds.some((id) => !allowedIds.has(id))) {
+      return response.error(res, "Tanlangan xona ushbu bronga tegishli emas");
+    }
+
+    const selectedGuests = guests.filter((guest) => activeGuestIds.includes(String(guest._id)));
+    const roomDocs = await Room.find({ _id: { $in: selectedGuests.map((guest) => guest.room) } }).lean();
+    const roomsById = new Map(roomDocs.map((room) => [String(room._id), room]));
+    for (const guest of selectedGuests) {
+      const roomDoc = roomsById.get(String(guest.room));
+      if (!roomDoc) return response.notFound(res, "Xona topilmadi");
+      if (roomDoc.status === "remont") return response.error(res, `${roomDoc.roomNumber}-xona remont/yopiq holatda`);
+      // eslint-disable-next-line no-await-in-loop
+      const activeCount = await Guest.countDocuments({ room: guest.room, status: "active" });
+      if (activeCount >= Number(roomDoc.capacity || 0)) {
+        return response.error(res, `${roomDoc.roomNumber}-xonada bo'sh joy yo'q`);
+      }
+    }
+
+    const hotelSettings = await getHotelSettings();
+    const now = new Date();
+    const acceptedBy = await buildActionBy(req.admin);
+    const affectedRoomIds = new Set();
+    for (const guest of guests) {
+      affectedRoomIds.add(String(guest.room));
+      if (activeGuestIds.includes(String(guest._id))) {
+        const billing = buildBillingState(now, Math.max(Number(guest.stayDays || 1), 1), now, hotelSettings);
+        guest.status = "active";
+        guest.checkInAt = now;
+        guest.bookedForAt = guest.bookedForAt || now;
+        guest.acceptedBy = acceptedBy;
+        guest.checkoutReminderAt = billing.checkoutReminderAt;
+        guest.checkoutDueAt = billing.checkoutDueAt;
+        guest.stayDays = billing.stayDays;
+        guest.billableDays = billing.billableDays;
+        const servicesTotal = (guest.services || []).reduce((sum, service) => sum + Number(service?.totalAmount || 0), 0);
+        guest.totalAmount = getLodgingTotal(guest, billing.billableDays) + servicesTotal;
+        recalcAmounts(guest);
+      } else {
+        guest.status = "cancelled";
+        guest.cancelledAt = now;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await guest.save();
+      emitGuestChanged(req.app.get("socket"), {
+        guestId: String(guest._id), roomId: String(guest.room || ""), status: guest.status,
+        reason: guest.status === "active" ? "website_booking_room_activated" : "website_booking_room_cancelled",
+      });
+    }
+
+    for (const roomId of affectedRoomIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await syncRoomOccupancy(roomId);
+    }
+
+    return response.success(res, "Tanlangan xonalar aktiv qilindi, qolganlari bekor qilindi", {
+      bookingReference,
+      activated: activeGuestIds.length,
+      cancelled: guests.length - activeGuestIds.length,
+    });
   } catch (error) {
     return response.serverError(res, error.message);
   }
@@ -2262,6 +2339,7 @@ module.exports = {
   decideVipRequest,
   updateGuest,
   activateBookedGuest,
+  resolveWebsiteBookingRooms,
   cancelBookedGuest,
   addGuestPayment,
   updateGuestPayment,

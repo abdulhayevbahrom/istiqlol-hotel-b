@@ -121,6 +121,7 @@ const {
   decideVipRequest,
   updateGuest,
   activateBookedGuest,
+  resolveWebsiteBookingRooms,
   cancelBookedGuest,
   addGuestPayment,
   updateGuestPayment,
@@ -381,6 +382,7 @@ router.post(
   validate(guestIdParamsSchema, "params"),
   activateBookedGuest,
 );
+router.post("/website-booking/:reference/resolve", resolveWebsiteBookingRooms);
 router.post(
   "/guest/:id/cancel-booking",
   validate(guestIdParamsSchema, "params"),
