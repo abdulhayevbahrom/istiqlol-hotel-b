@@ -82,6 +82,9 @@ const serializePublicBooking = (guests) => {
     checkIn: publicCheckIn,
     checkOut: publicCheckOut,
     status: primary.status,
+    language: primary.bookingLanguage || "uz",
+    createdAt: primary.createdAt,
+    guestsCount: Number(String(primary.note || "").match(/Mehmonlar soni: (\d+)/)?.[1] || 0),
     rooms: guests.map((guest) => ({
       category: guest.room?.category || "",
       capacity: guest.room?.capacity || 0,
@@ -191,6 +194,7 @@ const createPublicBooking = async (req, res) => {
       ? requestedSelections.reduce((sum, item) => sum + item.count, 0)
       : Math.max(Math.trunc(Number(req.body.roomCount || 1)), 1);
     const guestType = req.body.guestType === "chetellik" ? "chetellik" : "uzb";
+    const bookingLanguage = ["uz", "ru", "en"].includes(req.body.language) ? req.body.language : "uz";
     const requestedCapacity = Math.max(Number(req.body.roomCapacity || 0), 0);
     const requestedRate = Math.max(Number(req.body.roomRate || 0), 0);
     const note = normalizeText(req.body.note);
@@ -304,6 +308,7 @@ const createPublicBooking = async (req, res) => {
       email,
       bookingReference,
       bookingPublicTokenHash: publicTokenHash,
+      bookingLanguage,
       organization: "",
       guestType,
       vip: false,
@@ -359,6 +364,7 @@ const createPublicBooking = async (req, res) => {
         guestName: `${firstname} ${lastname}`.trim(),
         reference: bookingReference,
         token: publicToken,
+        booking: serializePublicBooking(populatedGuests),
       });
     } catch (emailError) {
       console.error("Bron tasdiq emailini yuborib bo'lmadi:", emailError.message);

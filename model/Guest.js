@@ -59,6 +59,7 @@ const guestSchema = new mongoose.Schema(
     email: { type: String, trim: true, default: "" },
     bookingReference: { type: String, trim: true, default: "", index: true },
     bookingPublicTokenHash: { type: String, trim: true, default: "", index: true },
+    bookingLanguage: { type: String, enum: ["uz", "ru", "en"], default: "uz" },
     organization: { type: String, trim: true, default: "" },
     group: {
       type: mongoose.Schema.Types.ObjectId,
