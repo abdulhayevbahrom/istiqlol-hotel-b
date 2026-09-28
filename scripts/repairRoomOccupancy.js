@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const connectDB = require("../config/dbConfig");
 const Room = require("../model/Room");
 const Guest = require("../model/Guest");
+const { resolveRoomStatus } = require("../utils/roomOccupancy");
 
 const syncRoomOccupancy = async () => {
   const [rooms, activeCounts] = await Promise.all([
@@ -32,12 +33,10 @@ const syncRoomOccupancy = async () => {
   const ops = [];
   for (const room of rooms) {
     const activeCount = Number(activeMap.get(String(room._id)) || 0);
-    const nextStatus =
-      room.status === "remont"
-        ? "remont"
-        : activeCount >= Number(room.capacity || 0)
-          ? "band"
-          : "bosh";
+    const nextStatus = resolveRoomStatus({
+      currentStatus: room.status,
+      activeGuestsCount: activeCount,
+    });
 
     if (
       Number(room.activeGuestsCount || 0) === activeCount &&

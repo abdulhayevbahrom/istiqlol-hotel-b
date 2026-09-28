@@ -119,6 +119,8 @@ const createRoom = async (req, res) => {
 
 const getRooms = async (_, res) => {
   try {
+    const roomIds = await Room.find().distinct("_id");
+    await syncRoomsOccupancyByIds(roomIds);
     const rooms = await Room.find().sort({ korpus: 1, floor: 1, roomNumber: 1 });
     return response.success(res, "Xonalar ro'yxati", rooms);
   } catch (error) {

@@ -6,6 +6,7 @@ const response = require("../utils/response");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const WEEKDAY_LABELS = ["Yak", "Dush", "Sesh", "Chor", "Pay", "Ju", "Shan"];
 const PAYMENT_TYPES = [
   { type: "naqd", label: "Naqd pul" },
@@ -32,6 +33,148 @@ const getMonthBase = (monthQuery) => {
     return moment.tz(`${monthQuery}-01`, "YYYY-MM-DD", TIMEZONE).startOf("month");
   }
   return moment.tz(TIMEZONE).startOf("month");
+};
+
+const getRoomDateBase = (dateQuery) => {
+  if (DATE_PATTERN.test(String(dateQuery || ""))) {
+    const parsed = moment.tz(dateQuery, "YYYY-MM-DD", true, TIMEZONE);
+    if (parsed.isValid()) return parsed.startOf("day");
+  }
+  return moment.tz(TIMEZONE).startOf("day");
+};
+
+const rangeContains = (from, to, at) => {
+  const fromTime = from ? new Date(from).getTime() : Number.NaN;
+  const toTime = to ? new Date(to).getTime() : Number.POSITIVE_INFINITY;
+  const atTime = at.getTime();
+  return Number.isFinite(fromTime) && fromTime <= atTime && atTime < toTime;
+};
+
+const getGuestRoomIdsAt = (guest, at) => {
+  const fallbackEnd = guest.checkOutAt || guest.checkoutDueAt || null;
+  const stays = Array.isArray(guest.roomStays) ? guest.roomStays : [];
+  const matchingStayIds = stays
+    .filter((stay) => rangeContains(stay.from, stay.to || fallbackEnd, at))
+    .map((stay) => String(stay.room || ""))
+    .filter(Boolean);
+
+  if (stays.length) return [...new Set(matchingStayIds)];
+
+  const startsAt = guest.status === "booked" ? guest.bookedForAt : guest.checkInAt;
+  return rangeContains(startsAt, fallbackEnd, at) && guest.room
+    ? [String(guest.room)]
+    : [];
+};
+
+const getRoomOverviewForDate = async (roomDate) => {
+  const now = moment.tz(TIMEZONE);
+  const isToday = roomDate.isSame(now, "day");
+  const referenceAt = isToday
+    ? now.toDate()
+    : roomDate.clone().endOf("day").toDate();
+  const guestFilter = isToday
+    ? { status: "active" }
+    : {
+        status: { $in: ["active", "booked", "checked_out"] },
+        $or: [
+          { checkInAt: { $lte: referenceAt } },
+          { bookedForAt: { $lte: referenceAt } },
+          { "roomStays.from": { $lte: referenceAt } },
+        ],
+      };
+  const [rooms, guests] = await Promise.all([
+    Room.find({}).select("_id category capacity status").lean(),
+    Guest.find(guestFilter)
+      .select("room roomStays status bookedForAt checkInAt checkOutAt checkoutDueAt blocksWholeRoom")
+      .lean(),
+  ]);
+
+  const occupiedRoomIds = new Set();
+  const guestsByRoom = new Map();
+  const fullyBlockedRoomIds = new Set();
+  for (const guest of guests) {
+    const roomIds = isToday
+      ? guest.room
+        ? [String(guest.room)]
+        : []
+      : getGuestRoomIdsAt(guest, referenceAt);
+    for (const roomId of roomIds) {
+      occupiedRoomIds.add(roomId);
+      guestsByRoom.set(roomId, Number(guestsByRoom.get(roomId) || 0) + 1);
+      if (guest.blocksWholeRoom) fullyBlockedRoomIds.add(roomId);
+    }
+  }
+
+  const categoryMap = new Map();
+  let occupied = 0;
+  let free = 0;
+  let repair = 0;
+  let totalCapacity = 0;
+  let guestsCount = 0;
+  let availablePlaces = 0;
+
+  for (const room of rooms) {
+    const category = String(room.category || "Noma'lum");
+    const capacity = Number(room.capacity || 0);
+    const isRepair = room.status === "remont";
+    const isOccupied = !isRepair && occupiedRoomIds.has(String(room._id));
+    const roomGuests = isOccupied ? Number(guestsByRoom.get(String(room._id)) || 0) : 0;
+    const row = categoryMap.get(category) || {
+      category,
+      total: 0,
+      occupied: 0,
+      free: 0,
+      repair: 0,
+      guests: 0,
+      capacity: 0,
+      availablePlaces: 0,
+    };
+
+    row.total += 1;
+    row.capacity += capacity;
+    row.guests += roomGuests;
+    const roomAvailablePlaces =
+      isRepair || fullyBlockedRoomIds.has(String(room._id))
+        ? 0
+        : Math.max(0, capacity - roomGuests);
+    row.availablePlaces += roomAvailablePlaces;
+    if (isRepair) {
+      row.repair += 1;
+      repair += 1;
+    } else if (isOccupied) {
+      row.occupied += 1;
+      occupied += 1;
+    } else {
+      row.free += 1;
+      free += 1;
+    }
+    totalCapacity += capacity;
+    guestsCount += roomGuests;
+    availablePlaces += roomAvailablePlaces;
+    categoryMap.set(category, row);
+  }
+
+  const total = rooms.length;
+  return {
+    date: roomDate.format("YYYY-MM-DD"),
+    total,
+    occupied,
+    free,
+    repair,
+    guests: guestsCount,
+    capacity: totalCapacity,
+    availablePlaces,
+    occupancyPercent:
+      total > 0 ? Number(((occupied / total) * 100).toFixed(1)) : 0,
+    categories: [...categoryMap.values()].sort((a, b) =>
+      a.category.localeCompare(b.category, "uz"),
+    ),
+    chart: {
+      labels: ["Band", "Bo'sh", "Remont"],
+      values: [occupied, free, repair],
+      colors: ["#c55b4c", "#2f786f", "#d1a13c"],
+    },
+  };
 };
 
 const getHistoricalRevenue = async (
@@ -89,6 +232,7 @@ const getHistoricalRevenue = async (
 const getDashboardSummary = async (req, res) => {
   try {
     const base = getMonthBase(req.query.month);
+    const roomDate = getRoomDateBase(req.query.roomDate);
     const monthKey = base.format("YYYY-MM");
     const monthStart = base.clone().startOf("month");
     const nextMonthStart = base.clone().add(1, "month").startOf("month");
@@ -265,7 +409,7 @@ const getDashboardSummary = async (req, res) => {
       $or: [{ checkOutAt: null }, { checkOutAt: { $gte: monthStart.toDate() } }],
     };
 
-    const [activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, expensesFacet = {}, roomsFacet = {}] =
+    const [activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, expensesFacet = {}, roomOverview] =
       await Promise.all([
         Guest.countDocuments({
           ...overlapMonthFilter,
@@ -337,36 +481,7 @@ const getDashboardSummary = async (req, res) => {
             },
           },
         ]).then((result) => result?.[0] || {}),
-        Room.aggregate([
-          {
-            $group: {
-              _id: "$status",
-              count: { $sum: 1 },
-              capacityTotal: { $sum: { $ifNull: ["$capacity", 0] } },
-            },
-          },
-          {
-            $group: {
-              _id: null,
-              total: { $sum: "$count" },
-              capacityTotal: { $sum: "$capacityTotal" },
-              byStatus: {
-                $push: {
-                  k: "$_id",
-                  v: "$count",
-                },
-              },
-            },
-          },
-          {
-            $project: {
-              _id: 0,
-              total: 1,
-              capacityTotal: 1,
-              byStatus: { $arrayToObject: "$byStatus" },
-            },
-          },
-        ]).then((result) => result?.[0] || {}),
+        getRoomOverviewForDate(roomDate),
       ]);
 
     const expenseDailyMap = new Map(
@@ -388,26 +503,7 @@ const getDashboardSummary = async (req, res) => {
       totalExpense: expensesTotal,
       width: Math.max(760, daysInMonth * 34),
     };
-    const totalRooms = Number(roomsFacet?.total || 0);
-    const totalCapacity = Number(roomsFacet?.capacityTotal || 0);
-    const occupiedRooms = Number(roomsFacet?.byStatus?.band || 0);
-    const freeRooms = Number(roomsFacet?.byStatus?.bosh || 0);
-    const repairRooms = Number(roomsFacet?.byStatus?.remont || 0);
-    const roomOverview = {
-      total: totalRooms,
-      occupied: occupiedRooms,
-      free: freeRooms,
-      repair: repairRooms,
-      occupancyPercent:
-        totalRooms > 0
-          ? Number(((occupiedRooms / totalRooms) * 100).toFixed(1))
-          : 0,
-      chart: {
-        labels: ["Band", "Bo'sh", "Remont"],
-        values: [occupiedRooms, freeRooms, repairRooms],
-        colors: ["#c55b4c", "#2f786f", "#d1a13c"],
-      },
-    };
+    const totalCapacity = Number(roomOverview?.capacity || 0);
 
     const recentPayments = (paymentsFacetResult?.recentPayments || []).map((item) => ({
       ...item,
