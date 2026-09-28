@@ -63,15 +63,15 @@ test("payments after the report cutoff are excluded", () => {
   assert.deepEqual(result.closing, { prepayment: 0, debt: 300000 });
 });
 
-test("daily room snapshot excludes guests who checked out before replacement moved in", () => {
+test("daily report includes checked-out guests who occupied a room during the operational day", () => {
   const snapshotAt = new Date(nextDayStart.getTime() - 1);
-  const filter = getDailyActiveGuestFilter({ snapshotAt });
+  const filter = getDailyActiveGuestFilter({ dayStart, snapshotAt });
 
   assert.deepEqual(filter, {
     checkInAt: { $lte: snapshotAt },
     $or: [
       { status: "active" },
-      { status: "checked_out", checkOutAt: { $gt: snapshotAt } },
+      { status: "checked_out", checkOutAt: { $gt: dayStart } },
     ],
   });
 });

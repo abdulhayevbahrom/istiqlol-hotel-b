@@ -113,6 +113,7 @@ const {
   createGuest,
   createGuestsBulk,
   getGuests,
+  getGuestOrganizations,
   getOccupancy,
   getGuestById,
   getGuestByPassport,
@@ -331,6 +332,7 @@ router.delete(
 );
 router.post("/guests/bulk", validate(createGuestsBulkSchema), createGuestsBulk);
 router.get("/guests", getGuests);
+router.get("/guest-organizations", getGuestOrganizations);
 router.get("/occupancy", getOccupancy);
 router.get("/booking/status", getBookingStatus);
 router.post("/booking/sync", syncBookingNow);

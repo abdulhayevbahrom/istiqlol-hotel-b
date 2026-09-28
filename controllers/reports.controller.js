@@ -137,11 +137,11 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart }
   return { opening, closing, payments };
 };
 
-const getDailyActiveGuestFilter = ({ snapshotAt }) => ({
+const getDailyActiveGuestFilter = ({ dayStart, snapshotAt }) => ({
   checkInAt: { $lte: snapshotAt },
   $or: [
     { status: "active" },
-    { status: "checked_out", checkOutAt: { $gt: snapshotAt } },
+    { status: "checked_out", checkOutAt: { $gt: dayStart } },
   ],
 });
 
@@ -767,7 +767,7 @@ const getDailyReport = async (req, res) => {
           { $match: { "services.usedAt": { $gte: dayStart, $lt: nextDayStart } } },
           { $group: { _id: null, totalAmount: { $sum: { $ifNull: ["$services.totalAmount", 0] } } } },
         ]).then((rows) => rows?.[0] || {}),
-        Guest.find(getDailyActiveGuestFilter({ snapshotAt }))
+        Guest.find(getDailyActiveGuestFilter({ dayStart, snapshotAt }))
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
           .populate("roomStays.room", "roomNumber floor korpus capacity category prices")
           .select(

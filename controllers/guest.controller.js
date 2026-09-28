@@ -1068,6 +1068,32 @@ const getGuests = async (req, res) => {
   }
 };
 
+const getGuestOrganizations = async (req, res) => {
+  try {
+    const query = String(req.query.query || "").trim();
+    const filter = { organization: { $regex: "\\S" } };
+    if (query) {
+      filter.organization = {
+        $regex: escapeRegex(query),
+        $options: "i",
+      };
+    }
+
+    const organizations = await Guest.distinct("organization", filter);
+    const items = organizations
+      .map((organization) => String(organization || "").trim())
+      .filter(Boolean)
+      .sort((left, right) =>
+        left.localeCompare(right, "uz", { sensitivity: "base" }),
+      )
+      .slice(0, 20);
+
+    return response.success(res, "Tashkilotlar ro'yxati", items);
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const activateBookedGuest = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
@@ -2331,6 +2357,7 @@ module.exports = {
   createGuest,
   createGuestsBulk,
   getGuests,
+  getGuestOrganizations,
   getOccupancy,
   getGuestById,
   getGuestByPassport,
