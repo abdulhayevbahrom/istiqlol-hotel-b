@@ -13,6 +13,19 @@ const PAYMENT_TYPES = [
   { type: "karta", label: "Plastik karta" },
   { type: "bank", label: "Bank o'tkazma" },
 ];
+const ROOM_CATEGORY_ORDER = [
+  "Single Standart",
+  "Superior Single Standart",
+  "Twin Standart",
+  "Triple Standart",
+  "Quadruple Standart",
+  "Junior Suite",
+  "Deluxe Suite",
+  "Luxury Suite",
+];
+const ROOM_CATEGORY_ORDER_INDEX = new Map(
+  ROOM_CATEGORY_ORDER.map((category, index) => [category, index]),
+);
 
 const formatChange = (current, previous) => {
   const curr = Number(current || 0);
@@ -85,13 +98,12 @@ const getRoomOverviewForDate = async (roomDate) => {
   const [rooms, guests] = await Promise.all([
     Room.find({}).select("_id category capacity status").lean(),
     Guest.find(guestFilter)
-      .select("room roomStays status bookedForAt checkInAt checkOutAt checkoutDueAt blocksWholeRoom")
+      .select("room roomStays status bookedForAt checkInAt checkOutAt checkoutDueAt")
       .lean(),
   ]);
 
   const occupiedRoomIds = new Set();
   const guestsByRoom = new Map();
-  const fullyBlockedRoomIds = new Set();
   for (const guest of guests) {
     const roomIds = isToday
       ? guest.room
@@ -101,7 +113,6 @@ const getRoomOverviewForDate = async (roomDate) => {
     for (const roomId of roomIds) {
       occupiedRoomIds.add(roomId);
       guestsByRoom.set(roomId, Number(guestsByRoom.get(roomId) || 0) + 1);
-      if (guest.blocksWholeRoom) fullyBlockedRoomIds.add(roomId);
     }
   }
 
@@ -133,10 +144,9 @@ const getRoomOverviewForDate = async (roomDate) => {
     row.total += 1;
     row.capacity += capacity;
     row.guests += roomGuests;
-    const roomAvailablePlaces =
-      isRepair || fullyBlockedRoomIds.has(String(room._id))
-        ? 0
-        : Math.max(0, capacity - roomGuests);
+    // "Bo'sh o'rin" faqat butunlay bo'sh xonalarning sig'imini ko'rsatadi.
+    // Ichida kamida bitta mehmon bor xona (sig'imi to'lmagan bo'lsa ham) hisoblanmaydi.
+    const roomAvailablePlaces = !isRepair && !isOccupied ? capacity : 0;
     row.availablePlaces += roomAvailablePlaces;
     if (isRepair) {
       row.repair += 1;
@@ -166,9 +176,15 @@ const getRoomOverviewForDate = async (roomDate) => {
     availablePlaces,
     occupancyPercent:
       total > 0 ? Number(((occupied / total) * 100).toFixed(1)) : 0,
-    categories: [...categoryMap.values()].sort((a, b) =>
-      a.category.localeCompare(b.category, "uz"),
-    ),
+    categories: [...categoryMap.values()].sort((a, b) => {
+      const aIndex = ROOM_CATEGORY_ORDER_INDEX.get(a.category);
+      const bIndex = ROOM_CATEGORY_ORDER_INDEX.get(b.category);
+
+      if (aIndex !== undefined && bIndex !== undefined) return aIndex - bIndex;
+      if (aIndex !== undefined) return -1;
+      if (bIndex !== undefined) return 1;
+      return a.category.localeCompare(b.category, "uz");
+    }),
     chart: {
       labels: ["Band", "Bo'sh", "Remont"],
       values: [occupied, free, repair],
