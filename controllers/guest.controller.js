@@ -1660,6 +1660,32 @@ const updateGuest = async (req, res) => {
       await syncRoomOccupancy(nextRoomId);
     }
 
+    const after = pickGuestSnapshot(guest);
+    const editableAuditFields = [
+      "firstname",
+      "lastname",
+      "passport",
+      "phone",
+      "email",
+      "organization",
+      "room",
+      "guestType",
+      "dailyRate",
+      "dailyRates",
+      "stayDays",
+      "note",
+      "isBlacklisted",
+      "bookedForAt",
+      "checkInAt",
+      "checkOutAt",
+    ];
+    const directChanges = editableAuditFields.reduce((result, field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        result[field] = { from: before?.[field], to: after?.[field] };
+      }
+      return result;
+    }, {});
+
     await writeAuditLog(req, {
       action: guest.status === "booked" ? "BOOKING_UPDATED" : "GUEST_UPDATED",
       entity: "Guest",
@@ -1669,16 +1695,9 @@ const updateGuest = async (req, res) => {
           ? `${guest.firstname} ${guest.lastname} broni o'zgartirildi`
           : `${guest.firstname} ${guest.lastname} ma'lumotlari o'zgartirildi`,
       before,
-      after: pickGuestSnapshot(guest),
-      changes: {
-        status: { from: before?.status, to: guest.status },
-        room: { from: before?.room, to: String(guest.room || "") },
-        dailyRate: { from: before?.dailyRate, to: guest.dailyRate },
-        paidAmount: { from: before?.paidAmount, to: guest.paidAmount },
-        debtAmount: { from: before?.debtAmount, to: guest.debtAmount },
-        bookedForAt: { from: before?.bookedForAt, to: guest.bookedForAt },
-        checkoutDueAt: { from: before?.checkoutDueAt, to: guest.checkoutDueAt },
-      },
+      after,
+      changes: directChanges,
+      inferChanges: false,
     });
 
     emitGuestChanged(req.app.get("socket"), {
