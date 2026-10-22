@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { recordRoomTransfer, getRoomAt } = require("../utils/guestRoomStays");
+const {
+  recordRoomTransfer,
+  recordRoomChangeOnResume,
+  getRoomAt,
+} = require("../utils/guestRoomStays");
 const { getRatesAfterRoomTransfer, getLodgingTotal } = require("../utils/guestDailyRates");
 
 test("room transfer keeps the first three days in the old room", () => {
@@ -56,6 +60,75 @@ test("daily report attributes a guest to exactly one room at the report time", (
   };
   assert.equal(getRoomAt(guest, "2026-09-03T23:59:00+05:00"), "room-200");
   assert.equal(getRoomAt(guest, "2026-09-04T09:00:00+05:00"), "room-201");
+});
+
+test("resuming in a room selected after checkout updates room history", () => {
+  const guest = {
+    room: "room-212",
+    checkInAt: new Date("2026-09-23T13:53:00+05:00"),
+    checkOutAt: new Date("2026-10-18T12:00:00+05:00"),
+    roomStays: [
+      {
+        room: "room-206",
+        from: new Date("2026-09-23T13:53:00+05:00"),
+        to: new Date("2026-10-13T19:03:00+05:00"),
+      },
+      {
+        room: "room-304",
+        from: new Date("2026-10-13T19:03:00+05:00"),
+        to: null,
+      },
+    ],
+  };
+
+  const changed = recordRoomChangeOnResume(
+    guest,
+    new Date("2026-10-19T07:41:00+05:00"),
+  );
+
+  assert.equal(changed, true);
+  assert.deepEqual(guest.roomStays.map((stay) => ({
+    room: stay.room,
+    from: stay.from.toISOString(),
+    to: stay.to?.toISOString() || null,
+  })), [
+    {
+      room: "room-206",
+      from: "2026-09-23T08:53:00.000Z",
+      to: "2026-10-13T14:03:00.000Z",
+    },
+    {
+      room: "room-304",
+      from: "2026-10-13T14:03:00.000Z",
+      to: "2026-10-18T07:00:00.000Z",
+    },
+    {
+      room: "room-212",
+      from: "2026-10-19T02:41:00.000Z",
+      to: null,
+    },
+  ]);
+});
+
+test("resuming in the same room does not duplicate room history", () => {
+  const guest = {
+    room: "room-304",
+    checkOutAt: new Date("2026-10-18T12:00:00+05:00"),
+    roomStays: [
+      {
+        room: "room-304",
+        from: new Date("2026-10-13T19:03:00+05:00"),
+        to: null,
+      },
+    ],
+  };
+
+  assert.equal(
+    recordRoomChangeOnResume(guest, new Date("2026-10-19T07:41:00+05:00")),
+    false,
+  );
+  assert.equal(guest.roomStays.length, 1);
+  assert.equal(guest.roomStays[0].to, null);
 });
 
 test("room transfer preserves old room prices and applies new price to remaining days", () => {

@@ -23,7 +23,10 @@ const {
   getRatesAfterRoomTransfer,
 } = require("../utils/guestDailyRates");
 const { pickGuestSnapshot, writeAuditLog } = require("../utils/auditLog");
-const { recordRoomTransfer } = require("../utils/guestRoomStays");
+const {
+  recordRoomTransfer,
+  recordRoomChangeOnResume,
+} = require("../utils/guestRoomStays");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -2210,6 +2213,7 @@ const continueGuestStay = async (req, res) => {
     guest.checkoutReminderAt = continued.checkoutReminderAt;
     guest.totalAmount = continued.totalAmount;
     guest.debtAmount = continued.debtAmount;
+    recordRoomChangeOnResume(guest, now);
     guest.checkOutAt = null;
     guest.checkoutBy = null;
     guest.cancelledAt = null;

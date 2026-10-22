@@ -33,4 +33,33 @@ const getRoomAt = (guest, at) => {
   return stay?.room || guest.room;
 };
 
-module.exports = { recordRoomTransfer, getRoomAt };
+const recordRoomChangeOnResume = (guest, resumedAt = new Date()) => {
+  const stays = Array.from(guest.roomStays || []);
+  const currentRoomId = String(guest.room || "");
+  if (!currentRoomId) return false;
+
+  if (!stays.length) {
+    stays.push({
+      room: guest.room,
+      from: new Date(guest.checkInAt || resumedAt),
+      to: null,
+    });
+    guest.roomStays = stays;
+    return true;
+  }
+
+  const last = stays[stays.length - 1];
+  if (String(last.room) === currentRoomId) return false;
+
+  const resumeTime = new Date(resumedAt);
+  const previousStayEnd = guest.checkOutAt
+    ? new Date(guest.checkOutAt)
+    : resumeTime;
+  const lastStart = new Date(last.from);
+  last.to = new Date(Math.max(lastStart.getTime(), previousStayEnd.getTime()));
+  stays.push({ room: guest.room, from: resumeTime, to: null });
+  guest.roomStays = stays;
+  return true;
+};
+
+module.exports = { recordRoomTransfer, recordRoomChangeOnResume, getRoomAt };
