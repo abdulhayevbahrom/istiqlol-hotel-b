@@ -1668,6 +1668,7 @@ const updateGuest = async (req, res) => {
       "firstname",
       "lastname",
       "passport",
+      "birthDate",
       "phone",
       "email",
       "organization",
