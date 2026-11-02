@@ -88,7 +88,7 @@ const runActivateDueBookingsJob = async (io) => {
     getHotelSettings(),
     Room.find({
       _id: { $in: objectRoomIds },
-      status: { $ne: "remont" },
+      status: { $nin: ["remont", "tozalash"] },
     })
       .select("_id capacity")
       .lean(),

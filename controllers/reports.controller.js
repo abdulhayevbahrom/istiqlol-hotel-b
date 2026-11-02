@@ -526,6 +526,7 @@ const getClientSalesReport = async (req, res) => {
     const requestedType = normalizePaymentType(req.query.type);
     const search = String(req.query.query || "").trim();
     const requestedClientType = String(req.query.clientType || "").toLowerCase().trim();
+    const requestedFloor = Number(req.query.floor || 0);
     const page = Math.max(Number(req.query.page || 1), 1);
     const limit = Math.min(Math.max(Number(req.query.limit || 30), 1), 100);
     const allowedTypes = new Set(["naqd", "bank", "karta", "click"]);
@@ -582,6 +583,9 @@ const getClientSalesReport = async (req, res) => {
         },
       },
       { $unwind: { path: "$roomDoc", preserveNullAndEmptyArrays: true } },
+      ...(Number.isFinite(requestedFloor) && requestedFloor > 0
+        ? [{ $match: { "roomDoc.floor": requestedFloor } }]
+        : []),
       {
         $lookup: {
           from: "groupbookings",
@@ -631,6 +635,7 @@ const getClientSalesReport = async (req, res) => {
           groupName: { $ifNull: ["$groupDoc.name", ""] },
           roomNumber: { $ifNull: ["$roomDoc.roomNumber", "-"] },
           korpus: { $ifNull: ["$roomDoc.korpus", ""] },
+          floor: { $ifNull: ["$roomDoc.floor", null] },
           amount: { $ifNull: ["$totalAmount", 0] },
           paidAmount: { $ifNull: ["$paidAmount", 0] },
           debtAmount: { $ifNull: ["$debtAmount", 0] },

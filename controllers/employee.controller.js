@@ -5,13 +5,14 @@ const response = require("../utils/response");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { writeAuditLog } = require("../utils/auditLog");
+const TelegramAccount = require("../model/TelegramAccount");
 
 const ACCESS_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "12h";
 const REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
 const REFRESH_SECRET =
   process.env.JWT_REFRESH_SECRET_KEY || process.env.JWT_SECRET_KEY;
 const EMPLOYEE_LIST_FIELDS =
-  "firstname lastname position role salary salaryType canLogin login sections isActive createdAt";
+  "firstname lastname position role salary salaryType canLogin login sections isActive telegramChatId assignedAreas createdAt";
 
 const buildTokenPayload = (employee) => ({
   id: employee._id,
@@ -49,6 +50,8 @@ const employeeSnapshot = (employee) => {
     login: item.login,
     sections: item.sections || [],
     isActive: item.isActive,
+    telegramChatId: item.telegramChatId || "",
+    assignedAreas: item.assignedAreas || [],
   };
 };
 
@@ -59,6 +62,18 @@ const actorFromEmployee = (employee) => ({
   firstname: String(employee?.firstname || ""),
   lastname: String(employee?.lastname || ""),
 });
+
+const assignPendingTelegram = async (telegramAccountId, employeeId) => {
+  if (!telegramAccountId) return;
+  const account = await TelegramAccount.findById(telegramAccountId);
+  if (!account) throw new Error("Telegram tasdiqlash so'rovi topilmadi");
+  if (account.status === "verified" && String(account.employee || "") === String(employeeId)) return;
+  if (account.status !== "pending") throw new Error("Telegram tasdiqlash so'rovi faol emas");
+  const occupied = await TelegramAccount.exists({ employee: employeeId, _id: { $ne: account._id } });
+  if (occupied) throw new Error("Bu xodimga Telegram akkaunti allaqachon biriktirilgan");
+  account.employee = employeeId;
+  await account.save();
+};
 
 // Avval rol maydoni bo'lmagan hisoblarda Owner lavozimi ishlatilgan.
 // Faqat bitta shunday hisob bo'lsa, uning rolini bir marta tiklaymiz.
@@ -96,6 +111,9 @@ const createEmployee = async (req, res) => {
       login,
       sections,
       password,
+      telegramChatId,
+      assignedAreas,
+      telegramAccountId,
     } = req.body;
     const normalizedRole = String(role || "staff").trim().toLowerCase();
     if (!normalizedRole) return response.error(res, "Rol nomi majburiy");
@@ -134,7 +152,10 @@ const createEmployee = async (req, res) => {
       login: canLogin ? normalizedUsername : undefined,
       sections,
       password: canLogin ? hashedPassword : undefined,
+      telegramChatId: String(telegramChatId || "").trim(),
+      assignedAreas: assignedAreas || [],
     });
+    await assignPendingTelegram(telegramAccountId, employee._id);
 
     await writeAuditLog(req, {
       action: "EMPLOYEE_CREATED",
@@ -179,6 +200,8 @@ const updateEmployee = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = { ...req.body };
+    const telegramAccountId = updates.telegramAccountId;
+    delete updates.telegramAccountId;
     if (Object.prototype.hasOwnProperty.call(updates, "role")) {
       updates.role = String(updates.role).trim().toLowerCase();
       if (!updates.role) return response.error(res, "Rol nomi majburiy");
@@ -266,6 +289,7 @@ const updateEmployee = async (req, res) => {
       returnDocument: "after",
       runValidators: true,
     });
+    await assignPendingTelegram(telegramAccountId, employee._id);
 
     await writeAuditLog(req, {
       action: "EMPLOYEE_UPDATED",

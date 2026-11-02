@@ -107,7 +107,7 @@ const findAvailablePhysicalRoom = async ({
     const currentRoom = await Room.findOne({
       _id: existingGuest.room,
       category,
-      status: { $ne: "remont" },
+      status: { $nin: ["remont", "tozalash"] },
     }).lean();
     if (
       currentRoom &&
@@ -122,7 +122,7 @@ const findAvailablePhysicalRoom = async ({
     }
   }
 
-  const rooms = await Room.find({ category, status: { $ne: "remont" } })
+  const rooms = await Room.find({ category, status: { $nin: ["remont", "tozalash"] } })
     .sort({ korpus: 1, floor: 1, roomNumber: 1 })
     .lean();
   for (const room of rooms) {

@@ -189,7 +189,7 @@ const getPublicRoomCategories = async (_, res) => {
       normalizeCategoryImageItems(settings.roomCategoryImages)
         .map((item) => [item.category, item.images]),
     );
-    const rooms = await Room.find({ status: { $ne: "remont" } })
+    const rooms = await Room.find({ status: { $nin: ["remont", "tozalash"] } })
       .select("category capacity prices images")
       .lean();
     const groups = new Map();

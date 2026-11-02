@@ -70,6 +70,11 @@ const employeeSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    telegramChatId: { type: String, trim: true, default: "" },
+    assignedAreas: {
+      type: [{ korpus: { type: String, enum: ["A", "B"] }, floor: { type: Number, min: 1 } }],
+      default: [],
+    },
   },
   { timestamps: true }
 );

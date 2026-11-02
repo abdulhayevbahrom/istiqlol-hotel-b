@@ -10,6 +10,7 @@ const {
   removeUploadedFiles,
 } = require("../middleware/roomImageUpload.middleware");
 const { writeAuditLog } = require("../utils/auditLog");
+const { notifyRoomTask } = require("../utils/telegramBot");
 
 const parseMultipartPayload = (payload) => {
   const parsed = { ...payload };
@@ -142,6 +143,8 @@ const updateRoom = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = parseMultipartPayload(req.body);
+    const repairReason = String(updates.repairReason || "").trim();
+    delete updates.repairReason;
     const current = await Room.findById(id);
     const hotelSettings = await getHotelSettings();
 
@@ -150,6 +153,36 @@ const updateRoom = async (req, res) => {
       return response.notFound(res, "Xona topilmadi");
     }
     const before = roomSnapshot(current);
+
+    if (updates.status === "remont") {
+      if (Number(current.activeGuestsCount || 0) > 0) {
+        removeUploadedFiles(req.files);
+        return response.error(res, "Xonada faol mijoz bor. Ta'mirlashga olib bo'lmaydi");
+      }
+      if (!repairReason && current.status !== "remont") {
+        removeUploadedFiles(req.files);
+        return response.error(res, "Ta'mirlash sababini kiriting");
+      }
+      updates.task = {
+        type: "repair",
+        reason: repairReason || current.task?.reason || "",
+        assignedEmployee: null,
+        createdAt: new Date(),
+      };
+    } else if (updates.status === "tozalash") {
+      if (Number(current.activeGuestsCount || 0) > 0) {
+        removeUploadedFiles(req.files);
+        return response.error(res, "Xonada faol mijoz bor. Tozalashga yopib bo'lmaydi");
+      }
+      updates.task = {
+        type: "cleaning",
+        reason: "Xonani tozalash",
+        assignedEmployee: null,
+        createdAt: new Date(),
+      };
+    } else if (updates.status === "bosh" && ["remont", "tozalash"].includes(current.status)) {
+      updates.task = null;
+    }
 
     if (updates.roomNumber) {
       const legacy = parseLegacyRoomNumber(updates.roomNumber);
@@ -217,6 +250,9 @@ const updateRoom = async (req, res) => {
     }
 
     const nextRoom = await Room.findById(room._id);
+    if (["remont", "tozalash"].includes(updates.status)) {
+      notifyRoomTask(nextRoom).catch((error) => console.error("Telegram xabari yuborilmadi:", error.message));
+    }
     const after = roomSnapshot(nextRoom);
     const priceChanged =
       JSON.stringify(before?.prices || null) !== JSON.stringify(after?.prices || null);
@@ -245,6 +281,27 @@ const updateRoom = async (req, res) => {
   }
 };
 
+const completeRoomTask = async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id);
+    if (!room) return response.notFound(res, "Xona topilmadi");
+    if (!["tozalash", "remont"].includes(room.status)) {
+      return response.error(res, "Xonada faol topshiriq yo'q");
+    }
+    if (Number(room.activeGuestsCount || 0) > 0) {
+      return response.error(res, "Xonada faol mijoz bor");
+    }
+    room.status = "bosh";
+    room.task = undefined;
+    await room.save();
+    const io = req.app.get("socket");
+    if (io) io.emit("room_updated", { roomId: String(room._id), status: "bosh", reason: "room_task_completed" });
+    return response.success(res, "Xona tayyor va aktiv holatga o'tdi", room);
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
 const deleteRoom = async (req, res) => {
   try {
     const room = await Room.findByIdAndDelete(req.params.id);
@@ -269,4 +326,5 @@ module.exports = {
   getRoomById,
   updateRoom,
   deleteRoom,
+  completeRoomTask,
 };

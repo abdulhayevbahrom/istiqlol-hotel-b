@@ -11,7 +11,7 @@ const normalizeRoomIds = (roomIds = []) => [
 ];
 
 const resolveRoomStatus = ({ currentStatus, activeGuestsCount }) => {
-  if (currentStatus === "remont") return "remont";
+  if (["remont", "tozalash"].includes(currentStatus)) return currentStatus;
   return Number(activeGuestsCount || 0) > 0 ? "band" : "bosh";
 };
 

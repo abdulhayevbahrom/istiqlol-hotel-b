@@ -19,6 +19,7 @@ const { getPublicRoomCategories } = require("./controllers/setting.controller");
 const { getRooms } = require("./controllers/room.controller");
 const { createServer } = require("node:http");
 const { startGuestBillingCron } = require("./jobs/guestBilling.cron");
+const { telegramWebhook } = require("./controllers/telegram.controller");
 
 const { startBookingSync } = require("./integrations/booking/booking.service");
 
@@ -55,6 +56,7 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
+app.post("/telegram/webhook", telegramWebhook);
 
 // ⬇️ Mongoose pluginni shu yerda ulaymiz
 mongoose.plugin(applyTimezone);

@@ -36,8 +36,17 @@ const roomSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["bosh", "band", "remont"],
+      enum: ["bosh", "band", "tozalash", "remont"],
       default: "bosh",
+    },
+    task: {
+      type: {
+        type: String,
+        enum: ["cleaning", "repair"],
+      },
+      reason: { type: String, trim: true, default: "" },
+      assignedEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", default: null },
+      createdAt: { type: Date, default: null },
     },
     prices: {
       oddiy: { type: Number, required: true, min: 0 },

@@ -1,4 +1,4 @@
-const statuses = ["bosh", "band", "remont"];
+const statuses = ["bosh", "band", "tozalash", "remont"];
 const korpusValues = ["A", "B"];
 
 const createRoomSchema = {
@@ -22,6 +22,7 @@ const createRoomSchema = {
     },
     description: { type: "string" },
     status: { type: "string", enum: statuses },
+    repairReason: { type: "string", minLength: 1, maxLength: 500 },
   },
 };
 
@@ -45,6 +46,7 @@ const updateRoomSchema = {
     },
     description: { type: "string" },
     status: { type: "string", enum: statuses },
+    repairReason: { type: "string", minLength: 1, maxLength: 500 },
   },
 };
 

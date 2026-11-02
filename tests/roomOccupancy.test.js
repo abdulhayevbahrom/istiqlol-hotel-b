@@ -23,3 +23,10 @@ test("remont holati faol mijoz sonidan qat'i nazar saqlanadi", () => {
     "remont",
   );
 });
+
+test("tozalash holati faol mijoz bo'lmaganda saqlanadi", () => {
+  assert.equal(
+    resolveRoomStatus({ currentStatus: "tozalash", activeGuestsCount: 0 }),
+    "tozalash",
+  );
+});

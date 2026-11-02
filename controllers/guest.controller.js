@@ -23,6 +23,7 @@ const {
   getRatesAfterRoomTransfer,
 } = require("../utils/guestDailyRates");
 const { pickGuestSnapshot, writeAuditLog } = require("../utils/auditLog");
+const { notifyRoomTask } = require("../utils/telegramBot");
 const {
   recordRoomTransfer,
   recordRoomChangeOnResume,
@@ -362,7 +363,7 @@ const createGuest = async (req, res) => {
 
     const roomDoc = await Room.findById(room);
     if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-    if (roomDoc.status === "remont") {
+    if (["remont", "tozalash"].includes(roomDoc.status)) {
       return response.error(
         res,
         "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
@@ -564,7 +565,7 @@ const createGuestsBulk = async (req, res) => {
 
     const roomDoc = await Room.findById(room);
     if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-    if (roomDoc.status === "remont") {
+    if (["remont", "tozalash"].includes(roomDoc.status)) {
       return response.error(
         res,
         "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
@@ -1108,7 +1109,7 @@ const activateBookedGuest = async (req, res) => {
 
     const roomDoc = await Room.findById(guest.room);
     if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-    if (roomDoc.status === "remont") {
+    if (["remont", "tozalash"].includes(roomDoc.status)) {
       return response.error(res, "Bu xona remont/yopiq holatda");
     }
 
@@ -1243,7 +1244,7 @@ const resolveWebsiteBookingRooms = async (req, res) => {
     for (const guest of selectedGuests) {
       const roomDoc = roomsById.get(String(guest.room));
       if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-      if (roomDoc.status === "remont") return response.error(res, `${roomDoc.roomNumber}-xona remont/yopiq holatda`);
+      if (["remont", "tozalash"].includes(roomDoc.status)) return response.error(res, `${roomDoc.roomNumber}-xona yopiq holatda`);
       // eslint-disable-next-line no-await-in-loop
       const activeCount = await Guest.countDocuments({ room: guest.room, status: "active" });
       if (activeCount >= Number(roomDoc.capacity || 0)) {
@@ -1457,7 +1458,7 @@ const updateGuest = async (req, res) => {
       const targetRoom = await Room.findById(updates.room).lean();
       if (!targetRoom) return response.notFound(res, "Xona topilmadi");
       transferRoom = targetRoom;
-      if (targetRoom.status === "remont") {
+      if (["remont", "tozalash"].includes(targetRoom.status)) {
         return response.error(
           res,
           "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
@@ -2113,6 +2114,13 @@ const checkoutGuest = async (req, res) => {
     await guest.save();
 
     await syncRoomOccupancy(guest.room);
+    const checkoutRoom = await Room.findById(guest.room);
+    if (checkoutRoom && Number(checkoutRoom.activeGuestsCount || 0) === 0 && checkoutRoom.status === "bosh") {
+      checkoutRoom.status = "tozalash";
+      checkoutRoom.task = { type: "cleaning", reason: "Checkoutdan keyin tozalash", createdAt: new Date() };
+      await checkoutRoom.save();
+      notifyRoomTask(checkoutRoom).catch((error) => console.error("Telegram xabari yuborilmadi:", error.message));
+    }
 
     await writeAuditLog(req, {
       action: "GUEST_CHECKED_OUT",
@@ -2161,7 +2169,7 @@ const continueGuestStay = async (req, res) => {
     const additionalDays = Math.max(Number(req.body.additionalDays || 1), 1);
     const room = await Room.findById(guest.room).lean();
     if (!room) return response.notFound(res, "Xona topilmadi");
-    if (room.status === "remont") {
+    if (["remont", "tozalash"].includes(room.status)) {
       return response.error(
         res,
         "Xona remont holatida. Jarayonni davom ettirib bo'lmaydi",
@@ -2297,6 +2305,14 @@ const checkoutGuestsBulk = async (req, res) => {
     );
 
     await syncRoomsOccupancyBatch(roomIds);
+    const checkoutRooms = await Room.find({ _id: { $in: roomIds }, activeGuestsCount: 0, status: "bosh" });
+    for (const room of checkoutRooms) {
+      room.status = "tozalash";
+      room.task = { type: "cleaning", reason: "Checkoutdan keyin tozalash", createdAt: new Date() };
+      // eslint-disable-next-line no-await-in-loop
+      await room.save();
+      notifyRoomTask(room).catch((error) => console.error("Telegram xabari yuborilmadi:", error.message));
+    }
 
     await writeAuditLog(req, {
       action: "GUEST_BULK_CHECKED_OUT",

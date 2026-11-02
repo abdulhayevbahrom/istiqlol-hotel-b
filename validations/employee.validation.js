@@ -17,6 +17,9 @@ const createEmployeeSchema = {
       default: [],
       items: { type: "string", minLength: 1 },
     },
+    telegramChatId: { type: "string", maxLength: 40 },
+    assignedAreas: { type: "array", items: { type: "object", additionalProperties: false, required: ["korpus", "floor"], properties: { korpus: { type: "string", enum: ["A", "B"] }, floor: { type: "number", minimum: 1 } } } },
+    telegramAccountId: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
   },
   allOf: [
     {
@@ -49,6 +52,9 @@ const updateEmployeeSchema = {
       items: { type: "string", minLength: 1 },
     },
     isActive: { type: "boolean" },
+    telegramChatId: { type: "string", maxLength: 40 },
+    assignedAreas: { type: "array", items: { type: "object", additionalProperties: false, required: ["korpus", "floor"], properties: { korpus: { type: "string", enum: ["A", "B"] }, floor: { type: "number", minimum: 1 } } } },
+    telegramAccountId: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
   },
 };
 

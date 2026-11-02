@@ -43,6 +43,7 @@ const {
   getRoomById,
   updateRoom,
   deleteRoom,
+  completeRoomTask,
 } = require("../controllers/room.controller");
 const {
   uploadRoomImages,
@@ -71,6 +72,7 @@ const {
 } = require("../controllers/setting.controller");
 const { getAuditLogs } = require("../controllers/auditLog.controller");
 const { sendSupportMessage } = require("../controllers/support.controller");
+const { getTelegramAccounts } = require("../controllers/telegram.controller");
 const {
   getStatus: getBookingStatus,
   syncNow: syncBookingNow,
@@ -180,6 +182,7 @@ router.post(
   createEmployee,
 );
 router.get("/employees", requireSectionAccess("employees"), getEmployees);
+router.get("/telegram/accounts", requireSectionAccess("employees"), getTelegramAccounts);
 router.get(
   "/employee/:id",
   requireSectionAccess("employees"),
@@ -232,6 +235,7 @@ router.put(
   updateRoom,
 );
 router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
+router.post("/room/:id/complete-task", validate(roomIdParamsSchema, "params"), completeRoomTask);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
 router.get("/reports-summary", getReportsSummary);
