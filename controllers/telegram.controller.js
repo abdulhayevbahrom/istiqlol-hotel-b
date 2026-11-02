@@ -11,7 +11,17 @@ const sendText = (chatId, text, extra = {}) => apiCall("sendMessage", { chat_id:
 
 const getTelegramAccounts = async (_, res) => {
   try {
-    const accounts = await TelegramAccount.find({ status: { $in: ["pending", "verified"] } })
+    const now = new Date();
+    await TelegramAccount.updateMany(
+      { status: "pending", codeExpiresAt: { $lte: now } },
+      { $set: { status: "blocked" } },
+    );
+    const accounts = await TelegramAccount.find({
+      $or: [
+        { status: "verified" },
+        { status: "pending", codeExpiresAt: { $gt: now } },
+      ],
+    })
       .populate("employee", "firstname lastname").sort({ createdAt: -1 }).lean();
     return response.success(res, "Telegram so'rovlari", accounts);
   } catch (error) { return response.serverError(res, error.message); }
