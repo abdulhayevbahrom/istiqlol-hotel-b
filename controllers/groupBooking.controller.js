@@ -100,7 +100,7 @@ const createGroupBooking = async (req, res) => {
     const roomMap = new Map(rooms.map((room) => [String(room._id), room]));
     for (const assignment of assignments) {
       const room = roomMap.get(String(assignment.room));
-      if (["remont", "tozalash"].includes(room.status)) {
+      if (room.status === "remont") {
         return response.error(res, `${room.roomNumber}-xona remont holatida`);
       }
       if (assignment.guests.length > Number(room.capacity || 0)) {

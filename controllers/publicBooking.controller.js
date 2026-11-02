@@ -144,7 +144,7 @@ const getPublicRoomAvailability = async (req, res) => {
       stayDays,
       hotelSettings.checkoutTime || "12:00",
     );
-    const rooms = await Room.find({ status: { $nin: ["remont", "tozalash"] } }).select("_id").lean();
+    const rooms = await Room.find({ status: { $ne: "remont" } }).select("_id").lean();
     const roomIds = rooms.map((room) => room._id);
     const guests = await Guest.find({
       room: { $in: roomIds },
@@ -260,7 +260,7 @@ const createPublicBooking = async (req, res) => {
       ? requestedSelections
       : [{ category: roomType, capacity: requestedCapacity, rate: requestedRate, count: roomCount }];
     for (const selection of selections) {
-      const roomFilter = { status: { $nin: ["remont", "tozalash"] } };
+      const roomFilter = { status: { $ne: "remont" } };
       const categoryRegex = buildRoomTypeRegex(selection.category);
       if (categoryRegex) roomFilter.category = categoryRegex;
       if (selection.capacity > 0) roomFilter.capacity = selection.capacity;

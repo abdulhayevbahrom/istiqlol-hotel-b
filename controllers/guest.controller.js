@@ -363,7 +363,7 @@ const createGuest = async (req, res) => {
 
     const roomDoc = await Room.findById(room);
     if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-    if (["remont", "tozalash"].includes(roomDoc.status)) {
+    if (roomDoc.status === "remont" || (roomDoc.status === "tozalash" && !isBooking)) {
       return response.error(
         res,
         "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
@@ -565,7 +565,7 @@ const createGuestsBulk = async (req, res) => {
 
     const roomDoc = await Room.findById(room);
     if (!roomDoc) return response.notFound(res, "Xona topilmadi");
-    if (["remont", "tozalash"].includes(roomDoc.status)) {
+    if (roomDoc.status === "remont" || (roomDoc.status === "tozalash" && !isBooking)) {
       return response.error(
         res,
         "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
@@ -1458,7 +1458,7 @@ const updateGuest = async (req, res) => {
       const targetRoom = await Room.findById(updates.room).lean();
       if (!targetRoom) return response.notFound(res, "Xona topilmadi");
       transferRoom = targetRoom;
-      if (["remont", "tozalash"].includes(targetRoom.status)) {
+      if (targetRoom.status === "remont" || (targetRoom.status === "tozalash" && guest.status !== "booked")) {
         return response.error(
           res,
           "Bu xona remont/yopiq holatda. Mehmonni joylab bo'lmaydi",
