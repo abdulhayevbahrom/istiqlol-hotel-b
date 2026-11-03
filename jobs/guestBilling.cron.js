@@ -12,6 +12,7 @@ const {
   syncRoomsOccupancyByIds,
 } = require("../utils/roomOccupancy");
 const { getLodgingTotal } = require("../utils/guestDailyRates");
+const { notifyRoomTask } = require("../utils/telegramBot");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -306,11 +307,39 @@ const runAutomaticCheckoutJob = async (io, cutoffAt = new Date()) => {
   await Guest.bulkWrite(ops, { ordered: false });
   await syncRoomsOccupancyByIds(roomIds);
   await syncAllRoomsOccupancy();
+
+  const uniqueRoomIds = [...new Set(roomIds)];
+  const roomsToClean = await Room.find({
+    _id: { $in: uniqueRoomIds },
+    status: "bosh",
+    activeGuestsCount: 0,
+  });
+  for (const room of roomsToClean) {
+    room.status = "tozalash";
+    room.task = {
+      type: "cleaning",
+      reason: "Avtomatik checkoutdan keyin tozalash",
+      createdAt: new Date(),
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await room.save();
+    notifyRoomTask(room).catch((error) =>
+      console.error("Telegram xabari yuborilmadi:", error.message),
+    );
+  }
+
   emitGuestChanged(io, {
     reason: "guest_auto_checked_out",
     count: ops.length,
-    roomIds,
+    roomIds: uniqueRoomIds,
   });
+  if (io && roomsToClean.length) {
+    io.emit("room_updated", {
+      roomIds: roomsToClean.map((room) => String(room._id)),
+      status: "tozalash",
+      reason: "automatic_checkout_cleaning_required",
+    });
+  }
 };
 
 const getAutomaticCheckoutAt = (checkoutDueAt, executedAt = new Date()) => {
